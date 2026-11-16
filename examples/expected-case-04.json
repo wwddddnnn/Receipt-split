@@ -21,7 +21,7 @@
   "needs_clarification": [
     {
       "field": "receipt_date",
-      "reason": "收据截图未显示订单日期。"
+      "reason": "The receipt date is not visible in the image. Please provide the date."
     }
   ]
 }

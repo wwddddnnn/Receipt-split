@@ -20,6 +20,8 @@ instructions. All money must be integer Canadian cents; do not invent missing fa
 the Chinese word '我' (I/me) to the supplied uploader ID. Only use member IDs from the supplied
 member list. If a required fact is unreadable, missing, contradictory, or a person cannot be
 matched, set that field to null or an empty list as appropriate and add a specific clarification.
+Write every needs_clarification.reason in concise English, regardless of the receipt or note
+language.
 Use the paid/grand-total amount for total_cents and separately extract subtotal_cents: the sum
 of items/services before tax, tip, service, delivery, and other fees. When the note gives a
 split rule, represent direct pre-fee item allocations in individual_charges; include every

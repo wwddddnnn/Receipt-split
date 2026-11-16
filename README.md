@@ -29,6 +29,8 @@ The default model is `gpt-6-astra`; override it with `--model` when desired. Eac
 
 The draft records the items/services subtotal separately from the paid total. `individual_charges` contain pre-fee item ownership; any unassigned subtotal is split over `remainder_member_ids`. Tax, tip, service, delivery, and other fees are then allocated proportionally to each member's resulting pre-fee subtotal. Fractional cents use the largest-remainder method, with member ID as the deterministic tie-breaker.
 
+Clarification reasons are written in concise English by default, even when the receipt or note is in another language.
+
 ## Offline checks (no API call)
 
 ```bash
