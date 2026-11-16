@@ -1,0 +1,8 @@
+{
+  "receipt_date": "2026-02-14",
+  "total_cents": 6000,
+  "payer_id": "Doris",
+  "individual_charges": [],
+  "remainder_member_ids": ["Doris", "Amy", "Ben"],
+  "needs_clarification": []
+}

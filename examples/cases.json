@@ -1,0 +1,26 @@
+[
+  {
+    "id": "01-full-split",
+    "photo": "receipts/case-01-full-split.png",
+    "note": "我垫付，我们三个平摊。",
+    "uploader_id": "Doris",
+    "members": ["Doris", "Amy", "Ben"],
+    "expected": "expected-case-01.json"
+  },
+  {
+    "id": "02-individual-charge",
+    "photo": "receipts/case-02-individual-charge.png",
+    "note": "我垫付，$12 奶茶算 Amy 的，剩下我们三个平摊。",
+    "uploader_id": "Doris",
+    "members": ["Doris", "Amy", "Ben"],
+    "expected": "expected-case-02.json"
+  },
+  {
+    "id": "03-paid-total",
+    "photo": "receipts/case-03-paid-total.png",
+    "note": "我垫付，Amy 和 Ben 平摊。",
+    "uploader_id": "Doris",
+    "members": ["Doris", "Amy", "Ben"],
+    "expected": "expected-case-03.json"
+  }
+]
