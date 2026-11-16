@@ -36,6 +36,16 @@ def _artifact_dir(root: Path) -> Path:
     return directory
 
 
+def _publish_latest(root: Path, artifacts: Path) -> None:
+    """Point `artifacts/latest` at the newest run without deleting run history."""
+    latest = root / "latest"
+    if latest.exists() and not latest.is_symlink():
+        return
+    if latest.is_symlink():
+        latest.unlink()
+    latest.symlink_to(artifacts.name, target_is_directory=True)
+
+
 def _evaluate(actual: Any, expected: Any, path: str = "") -> list[dict[str, Any]]:
     differences: list[dict[str, Any]] = []
     if isinstance(expected, dict):
@@ -95,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:
         elapsed_ms = round((time.perf_counter() - started) * 1000)
         _write_json(artifacts / "error.json", {"error_type": type(error).__name__, "message": str(error), "elapsed_ms": elapsed_ms})
-        print(f"Extraction failed; diagnostic artifact: {artifacts}", file=sys.stderr)
+        _publish_latest(args.artifacts_dir, artifacts)
+        print(f"Extraction failed; diagnostic artifact: {artifacts.resolve()}", file=sys.stderr)
         return 1
 
     elapsed_ms = round((time.perf_counter() - started) * 1000)
@@ -103,7 +114,8 @@ def main(argv: list[str] | None = None) -> int:
     _write_json(artifacts / "draft.json", draft.model_dump(mode="json"))
     _write_json(artifacts / "timing.json", {"elapsed_ms": elapsed_ms, "model": args.model, "prompt_version": PROMPT_VERSION})
     print(json.dumps(draft.model_dump(mode="json"), ensure_ascii=False, indent=2))
-    print(f"Artifacts: {artifacts}", file=sys.stderr)
+    _publish_latest(args.artifacts_dir, artifacts)
+    print(f"Artifacts: {artifacts.resolve()}", file=sys.stderr)
 
     if args.expected:
         try:

@@ -30,9 +30,14 @@ def test_invalid_photo_creates_diagnostic_artifact(tmp_path: Path):
         "--members", "Doris,Amy,Ben", "--artifacts-dir", str(artifact_root),
     ])
     assert status == 1
-    errors = list(artifact_root.glob("*/error.json"))
+    errors = [
+        path
+        for path in artifact_root.glob("*/error.json")
+        if path.parent.name != "latest"
+    ]
     assert len(errors) == 1
     assert json.loads(errors[0].read_text())["error_type"] == "FileNotFoundError"
+    assert (artifact_root / "latest").resolve() == errors[0].parent.resolve()
 
 
 def test_expense_draft_rejects_non_iso_date():
