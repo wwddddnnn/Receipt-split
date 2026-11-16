@@ -22,5 +22,13 @@
     "uploader_id": "Doris",
     "members": ["Doris", "Amy", "Ben"],
     "expected": "expected-case-03.json"
+  },
+  {
+    "id": "04-individual-menu-items",
+    "photo": "receipts/case-04-individual-charge.PNG",
+    "note": "Doris 垫付，Amy 点了烤黑糖波波牛乳茶，Ben 点了清爽芭乐提，其他都是 Doris 的。",
+    "uploader_id": "Doris",
+    "members": ["Doris", "Amy", "Ben"],
+    "expected": "expected-case-04.json"
   }
 ]

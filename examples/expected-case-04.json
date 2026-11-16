@@ -1,0 +1,22 @@
+{
+  "receipt_date": null,
+  "total_cents": 11327,
+  "payer_id": "Doris",
+  "individual_charges": [
+    {
+      "member_id": "Amy",
+      "amount_cents": 1249
+    },
+    {
+      "member_id": "Ben",
+      "amount_cents": 1149
+    }
+  ],
+  "remainder_member_ids": ["Doris"],
+  "needs_clarification": [
+    {
+      "field": "receipt_date",
+      "reason": "收据截图未显示订单日期。"
+    }
+  ]
+}

@@ -5,6 +5,9 @@ from receipt_split.cli import _evaluate, main
 from receipt_split.models import ExpenseDraft
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
 def test_expected_answer_can_be_partial_for_targeted_evaluation():
     actual = {"total_cents": 5650, "payer_id": "Doris"}
     assert _evaluate(actual, {"total_cents": 5650}) == []
@@ -39,5 +42,18 @@ def test_expense_draft_rejects_non_iso_date():
             pass
         else:
             raise AssertionError("expected validation error")
+
+
+def test_case_four_expected_draft_matches_the_menu_assignment():
+    expected = json.loads((PROJECT_ROOT / "examples" / "expected-case-04.json").read_text())
+    draft = ExpenseDraft.model_validate(expected)
+
+    assert draft.total_cents == 11_327
+    assert [(charge.member_id, charge.amount_cents) for charge in draft.individual_charges] == [
+        ("Amy", 1_249),
+        ("Ben", 1_149),
+    ]
+    assert draft.remainder_member_ids == ["Doris"]
+    assert sum(charge.amount_cents for charge in draft.individual_charges) == 2_398
 
 
