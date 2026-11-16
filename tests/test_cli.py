@@ -23,6 +23,27 @@ def test_missing_key_is_reported():
     ]
 
 
+def test_assignment_lists_are_evaluated_without_regard_to_order():
+    actual = {
+        "individual_charges": [
+            {"member_id": "Doris", "amount_cents": 5_996},
+            {"member_id": "Amy", "amount_cents": 1_249},
+            {"member_id": "Ben", "amount_cents": 1_149},
+        ],
+        "remainder_member_ids": ["Doris", "Amy", "Ben"],
+    }
+    expected = {
+        "individual_charges": [
+            {"member_id": "Amy", "amount_cents": 1_249},
+            {"member_id": "Ben", "amount_cents": 1_149},
+            {"member_id": "Doris", "amount_cents": 5_996},
+        ],
+        "remainder_member_ids": ["Amy", "Ben", "Doris"],
+    }
+
+    assert _evaluate(actual, expected) == []
+
+
 def test_invalid_photo_creates_diagnostic_artifact(tmp_path: Path):
     artifact_root = tmp_path / "artifacts"
     status = main([

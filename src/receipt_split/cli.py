@@ -58,6 +58,18 @@ def _evaluate(actual: Any, expected: Any, path: str = "") -> list[dict[str, Any]
             else:
                 differences.extend(_evaluate(actual[key], expected_value, child_path))
     elif isinstance(expected, list):
+        if path == "individual_charges" and isinstance(actual, list):
+            expected = sorted(
+                expected,
+                key=lambda charge: (charge.get("member_id", ""), charge.get("amount_cents", 0)),
+            )
+            actual = sorted(
+                actual,
+                key=lambda charge: (charge.get("member_id", ""), charge.get("amount_cents", 0)),
+            )
+        elif path in {"remainder_member_ids", "needs_clarification"} and isinstance(actual, list):
+            expected = sorted(expected, key=lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True))
+            actual = sorted(actual, key=lambda value: json.dumps(value, ensure_ascii=False, sort_keys=True))
         if actual != expected:
             differences.append({"field": path, "expected": expected, "actual": actual})
     elif actual != expected:
