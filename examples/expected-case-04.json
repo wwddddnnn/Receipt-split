@@ -1,6 +1,7 @@
 {
   "receipt_date": null,
   "total_cents": 11327,
+  "subtotal_cents": 8394,
   "payer_id": "Doris",
   "individual_charges": [
     {
@@ -10,9 +11,13 @@
     {
       "member_id": "Ben",
       "amount_cents": 1149
+    },
+    {
+      "member_id": "Doris",
+      "amount_cents": 5996
     }
   ],
-  "remainder_member_ids": ["Doris"],
+  "remainder_member_ids": [],
   "needs_clarification": [
     {
       "field": "receipt_date",

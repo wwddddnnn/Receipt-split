@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class IndividualCharge(BaseModel):
-    """A portion of an expense assigned directly to one member, in cents."""
+    """A pre-fee item amount assigned directly to one member, in cents."""
 
     member_id: str = Field(min_length=1)
     amount_cents: int = Field(ge=1)
@@ -28,6 +28,11 @@ class ExpenseDraft(BaseModel):
         default=None, description="YYYY-MM-DD, or null when not legible"
     )
     total_cents: int | None = Field(default=None, ge=1)
+    subtotal_cents: int | None = Field(
+        default=None,
+        ge=1,
+        description="Items/services subtotal before tax, tip, service, delivery, and other fees",
+    )
     payer_id: str | None = Field(default=None, min_length=1)
     individual_charges: list[IndividualCharge] = Field(default_factory=list)
     remainder_member_ids: list[str] = Field(default_factory=list)

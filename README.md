@@ -23,6 +23,10 @@ conda run -n receipt-split receipt-split examples/receipts/case-01-full-split.pn
 
 The default model is `gpt-6-astra`; override it with `--model` when desired. Each invocation writes `run.json`, `raw_response.json`, `draft.json`, `timing.json`, and (when requested) `evaluation.json` under `artifacts/<UTC timestamp>-<id>/`. A failed request retains `run.json` and `error.json` instead. Expected answers are never sent to the model.
 
+### Fee allocation
+
+The draft records the items/services subtotal separately from the paid total. `individual_charges` contain pre-fee item ownership; any unassigned subtotal is split over `remainder_member_ids`. Tax, tip, service, delivery, and other fees are then allocated proportionally to each member's resulting pre-fee subtotal. Fractional cents use the largest-remainder method, with member ID as the deterministic tie-breaker.
+
 ## Offline checks (no API call)
 
 ```bash

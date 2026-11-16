@@ -3,6 +3,7 @@ from pathlib import Path
 
 from receipt_split.cli import _evaluate, main
 from receipt_split.models import ExpenseDraft
+from receipt_split.splitting import calculate_shares
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -49,11 +50,13 @@ def test_case_four_expected_draft_matches_the_menu_assignment():
     draft = ExpenseDraft.model_validate(expected)
 
     assert draft.total_cents == 11_327
+    assert draft.subtotal_cents == 8_394
     assert [(charge.member_id, charge.amount_cents) for charge in draft.individual_charges] == [
         ("Amy", 1_249),
         ("Ben", 1_149),
+        ("Doris", 5_996),
     ]
-    assert draft.remainder_member_ids == ["Doris"]
-    assert sum(charge.amount_cents for charge in draft.individual_charges) == 2_398
+    assert draft.remainder_member_ids == []
+    assert calculate_shares(draft) == {"Amy": 1_685, "Ben": 1_551, "Doris": 8_091}
 
 

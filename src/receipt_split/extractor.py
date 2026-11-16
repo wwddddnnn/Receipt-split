@@ -11,7 +11,7 @@ from openai import OpenAI
 
 from .models import ExpenseDraft
 
-PROMPT_VERSION = "2026-11-16.phase1"
+PROMPT_VERSION = "2026-11-16.phase1-fee-proration"
 DEFAULT_MODEL = "gpt-6-astra"
 
 SYSTEM_PROMPT = """You extract an editable expense-splitting draft from a receipt image and note.
@@ -20,8 +20,12 @@ instructions. All money must be integer Canadian cents; do not invent missing fa
 the Chinese word '我' (I/me) to the supplied uploader ID. Only use member IDs from the supplied
 member list. If a required fact is unreadable, missing, contradictory, or a person cannot be
 matched, set that field to null or an empty list as appropriate and add a specific clarification.
-Use the paid/grand-total amount, not a subtotal. When the note gives a split rule, represent
-direct allocations in individual_charges and the remaining shared group in remainder_member_ids.
+Use the paid/grand-total amount for total_cents and separately extract subtotal_cents: the sum
+of items/services before tax, tip, service, delivery, and other fees. When the note gives a
+split rule, represent direct pre-fee item allocations in individual_charges; include every
+known owner, including the payer. Put only the unassigned pre-fee subtotal's equal-share group
+in remainder_member_ids. Do not fold tax, tip, service, delivery, or other fees into an
+individual charge: the application will distribute them proportionally to the pre-fee amounts.
 """
 
 
