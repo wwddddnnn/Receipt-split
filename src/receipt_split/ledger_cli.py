@@ -37,6 +37,12 @@ def _parser() -> argparse.ArgumentParser:
     monthly = subparsers.add_parser("monthly", help="show balances and transfer suggestions")
     monthly.add_argument("month", help="YYYY-MM")
     monthly.add_argument("--database", type=Path, default=Path("ledger.sqlite"))
+    monthly.add_argument(
+        "--strategy",
+        choices=("group_netting", "receipt_links"),
+        default="group_netting",
+        help="group_netting reduces transfers across the group; receipt_links follows payer relationships",
+    )
     return parser
 
 
@@ -67,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(result.model_dump_json(indent=2))
         else:
-            print(ledger.monthly_settlement(args.month).model_dump_json(indent=2))
+            print(ledger.monthly_settlement(args.month, strategy=args.strategy).model_dump_json(indent=2))
     return 0
 
 

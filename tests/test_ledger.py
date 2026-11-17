@@ -247,3 +247,48 @@ def test_monthly_balances_and_transfers_use_receipt_date(ledger: Ledger):
         {"from_member_id": "AmyTest", "to_member_id": "BenTest", "amount_cents": 252},
         {"from_member_id": "AmyTest", "to_member_id": "CindyTest", "amount_cents": 3_552},
     ]
+
+
+def test_monthly_settlement_can_preserve_receipt_debt_links(ledger: Ledger):
+    ben_owed_by_amy = ExpenseDraft(
+        receipt_date="2026-04-01",
+        total_cents=10_000,
+        subtotal_cents=10_000,
+        payer_id="BenTest",
+        individual_charges=[IndividualCharge(member_id="AmyTest", amount_cents=10_000)],
+    )
+    cindy_owed_by_ben = ExpenseDraft(
+        receipt_date="2026-04-02",
+        total_cents=10_000,
+        subtotal_cents=10_000,
+        payer_id="CindyTest",
+        individual_charges=[IndividualCharge(member_id="BenTest", amount_cents=10_000)],
+    )
+    ledger.confirm_receipt(
+        ben_owed_by_amy,
+        note="AmyTest owes BenTest",
+        submission_id="amy-ben-chain",
+        provenance=_provenance(ben_owed_by_amy, uploader_id="BenTest"),
+    )
+    ledger.confirm_receipt(
+        cindy_owed_by_ben,
+        note="BenTest owes CindyTest",
+        submission_id="ben-cindy-chain",
+        provenance=_provenance(cindy_owed_by_ben),
+    )
+
+    group_netting = ledger.monthly_settlement("2026-04", strategy="group_netting")
+    receipt_links = ledger.monthly_settlement("2026-04", strategy="receipt_links")
+
+    assert group_netting.balances_cents == receipt_links.balances_cents == {
+        "AmyTest": -10_000,
+        "BenTest": 0,
+        "CindyTest": 10_000,
+    }
+    assert [transfer.model_dump() for transfer in group_netting.transfers] == [
+        {"from_member_id": "AmyTest", "to_member_id": "CindyTest", "amount_cents": 10_000}
+    ]
+    assert [transfer.model_dump() for transfer in receipt_links.transfers] == [
+        {"from_member_id": "AmyTest", "to_member_id": "BenTest", "amount_cents": 10_000},
+        {"from_member_id": "BenTest", "to_member_id": "CindyTest", "amount_cents": 10_000},
+    ]

@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import sqlite3
 from tempfile import NamedTemporaryFile
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -76,6 +76,7 @@ class TransferSuggestion(BaseModel):
 
 class MonthlySettlement(BaseModel):
     month: str
+    strategy: Literal["group_netting", "receipt_links"]
     balances_cents: dict[str, int]
     transfers: list[TransferSuggestion]
 
@@ -476,13 +477,26 @@ class Ledger:
             shares={share["member_id"]: share["amount_cents"] for share in share_rows}, created=created,
         )
 
-    def monthly_settlement(self, month: str) -> MonthlySettlement:
+    def monthly_settlement(
+        self,
+        month: str,
+        strategy: Literal["group_netting", "receipt_links"] = "group_netting",
+    ) -> MonthlySettlement:
+        """Return balances plus transfers using the selected settlement policy.
+
+        ``group_netting`` nets the whole group and can route money between
+        people without a shared receipt. ``receipt_links`` preserves the
+        original debtor-to-payer relationships, only netting reciprocal debts
+        between the same two members.
+        """
         try:
             date.fromisoformat(f"{month}-01")
         except ValueError as error:
             raise LedgerValidationError("month must use YYYY-MM") from error
         if len(month) != 7:
             raise LedgerValidationError("month must use YYYY-MM")
+        if strategy not in {"group_netting", "receipt_links"}:
+            raise LedgerValidationError("unknown settlement strategy")
         balances = {row["member_id"]: 0 for row in self.connection.execute("SELECT member_id FROM members ORDER BY member_id")}
         paid_rows = self.connection.execute(
             "SELECT payer_id AS member_id, COALESCE(SUM(total_cents), 0) AS amount_cents FROM receipts WHERE status = 'confirmed' AND substr(receipt_date, 1, 7) = ? GROUP BY payer_id",
@@ -497,6 +511,17 @@ class Ledger:
         for row in share_rows:
             balances[row["member_id"]] -= row["amount_cents"]
 
+        if strategy == "group_netting":
+            transfers = self._group_netting_transfers(balances)
+        else:
+            transfers = self._receipt_link_transfers(month)
+        return MonthlySettlement(
+            month=month, strategy=strategy, balances_cents=balances, transfers=transfers
+        )
+
+    @staticmethod
+    def _group_netting_transfers(balances: dict[str, int]) -> list[TransferSuggestion]:
+        """Settle global net balances, allowing transfers across receipt links."""
         creditors = [[member_id, amount] for member_id, amount in sorted(balances.items()) if amount > 0]
         debtors = [[member_id, -amount] for member_id, amount in sorted(balances.items()) if amount < 0]
         transfers: list[TransferSuggestion] = []
@@ -505,11 +530,60 @@ class Ledger:
             creditor_id, receivable = creditors[creditor_index]
             debtor_id, payable = debtors[debtor_index]
             amount = min(receivable, payable)
-            transfers.append(TransferSuggestion(from_member_id=debtor_id, to_member_id=creditor_id, amount_cents=amount))
+            transfers.append(
+                TransferSuggestion(
+                    from_member_id=debtor_id, to_member_id=creditor_id, amount_cents=amount
+                )
+            )
             creditors[creditor_index][1] -= amount
             debtors[debtor_index][1] -= amount
             if creditors[creditor_index][1] == 0:
                 creditor_index += 1
             if debtors[debtor_index][1] == 0:
                 debtor_index += 1
-        return MonthlySettlement(month=month, balances_cents=balances, transfers=transfers)
+        return transfers
+
+    def _receipt_link_transfers(self, month: str) -> list[TransferSuggestion]:
+        """Settle only direct receipt debts, netting each member pair both ways."""
+        rows = self.connection.execute(
+            """
+            SELECT s.member_id AS debtor_id, r.payer_id AS creditor_id,
+                   SUM(s.amount_cents) AS amount_cents
+            FROM receipt_shares AS s
+            JOIN receipts AS r ON r.receipt_id = s.receipt_id
+            WHERE r.status = 'confirmed'
+              AND substr(r.receipt_date, 1, 7) = ?
+              AND s.member_id != r.payer_id
+            GROUP BY s.member_id, r.payer_id
+            """,
+            (month,),
+        ).fetchall()
+        directed_debts = {
+            (row["debtor_id"], row["creditor_id"]): row["amount_cents"] for row in rows
+        }
+        transfers: list[TransferSuggestion] = []
+        handled_pairs: set[frozenset[str]] = set()
+        for debtor_id, creditor_id in sorted(directed_debts):
+            pair = frozenset((debtor_id, creditor_id))
+            if pair in handled_pairs:
+                continue
+            handled_pairs.add(pair)
+            forward = directed_debts.get((debtor_id, creditor_id), 0)
+            reverse = directed_debts.get((creditor_id, debtor_id), 0)
+            if forward > reverse:
+                transfers.append(
+                    TransferSuggestion(
+                        from_member_id=debtor_id,
+                        to_member_id=creditor_id,
+                        amount_cents=forward - reverse,
+                    )
+                )
+            elif reverse > forward:
+                transfers.append(
+                    TransferSuggestion(
+                        from_member_id=creditor_id,
+                        to_member_id=debtor_id,
+                        amount_cents=reverse - forward,
+                    )
+                )
+        return transfers

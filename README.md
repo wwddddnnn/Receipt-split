@@ -72,10 +72,10 @@ receipt-split-ledger confirm path/to/draft.json \
   --database ledger.sqlite --note 'AmyTest tea' --submission-id 'unique-client-id' \
   --uploader CindyTest --photo path/to/receipt.png --raw-response path/to/raw_response.json \
   --model gpt-6-astra --prompt-version 2026-11-16.phase1-fee-proration
-receipt-split-ledger monthly 2026-02 --database ledger.sqlite
+receipt-split-ledger monthly 2026-02 --database ledger.sqlite --strategy group_netting
 ```
 
-The database has `members`, `receipts`, and `receipt_shares` tables. `receipts.photo_paths_json` is a JSON list of relative image addresses, such as `["objects/abc123.png"]`; images themselves are immutable files in the database-adjacent `objects/` directory. MIME types and SHA-256 values are stored as aligned JSON lists for audit. Raw model response, extraction draft, confirmation draft, and extractor version remain in SQLite. A legacy database is migrated automatically: each existing image BLOB is exported to `objects/` and then removed from SQLite. Repeat `--photo` to associate several ordered images with one receipt. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers. `ledger.sqlite` and `objects/` are ignored by Git.
+The database has `members`, `receipts`, and `receipt_shares` tables. `receipts.photo_paths_json` is a JSON list of relative image addresses, such as `["objects/abc123.png"]`; images themselves are immutable files in the database-adjacent `objects/` directory. MIME types and SHA-256 values are stored as aligned JSON lists for audit. Raw model response, extraction draft, confirmation draft, and extractor version remain in SQLite. A legacy database is migrated automatically: each existing image BLOB is exported to `objects/` and then removed from SQLite. Repeat `--photo` to associate several ordered images with one receipt. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers. Choose `group_netting` (default) to net the whole group and usually reduce transfers, or `receipt_links` to preserve each debtor-to-payer relationship while netting reciprocal debts between the same two members. `ledger.sqlite` and `objects/` are ignored by Git.
 
 ## Offline checks (no API call)
 
