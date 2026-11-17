@@ -7,6 +7,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from openai import OpenAI
 
 from .models import ExpenseDraft
@@ -84,6 +85,7 @@ def extract_expense(
     if not photo_path.is_file():
         raise FileNotFoundError(f"receipt image was not found: {photo_path}")
 
+    load_dotenv(Path.cwd() / ".env", override=False)
     client = OpenAI()
     response = client.responses.parse(
         model=model,

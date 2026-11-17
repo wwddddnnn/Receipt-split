@@ -8,8 +8,10 @@ This is the requested first-phase command-line baseline. It sends one local JPG/
 cd /Users/doriswu/code/Python/receipt-split
 conda create -n receipt-split python=3.12 -y
 conda run -n receipt-split python -m pip install -e '.[dev]'
-export OPENAI_API_KEY='your-key-here'
+cp .env.example .env
 ```
+
+Add the key locally to `.env` as `OPENAI_API_KEY=...`. The extractor loads that file at runtime; `.env` is ignored by Git, while `.env.example` is the safe template. A system `OPENAI_API_KEY`, if set, takes precedence.
 
 ## Run a real API extraction
 
