@@ -31,6 +31,19 @@ The draft records the items/services subtotal separately from the paid total. `i
 
 Clarification reasons are written in concise English by default, even when the receipt or note is in another language.
 
+## SQLite ledger
+
+Initialize a local ledger with its fixed member group, then confirm a reviewed `draft.json`. Confirmation recalculates shares, rejects unresolved clarifications, writes the expense and all shares in one SQLite transaction, and makes identical submission-ID retries idempotent.
+
+```bash
+receipt-split-ledger init --database ledger.sqlite --members Doris,Amy,Ben
+receipt-split-ledger confirm path/to/draft.json \
+  --database ledger.sqlite --note 'Amy tea' --submission-id 'unique-client-id'
+receipt-split-ledger monthly 2026-02 --database ledger.sqlite
+```
+
+The database has `members`, `expenses`, and `expense_shares` tables. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers.
+
 ## Offline checks (no API call)
 
 ```bash
