@@ -43,9 +43,25 @@ conda run -n receipt-split receipt-split does-not-exist.jpg \
 
 The second command verifies failure-audit creation and intentionally exits with status `1`.
 
+## Live model evaluation with pytest
+
+Regular `pytest` keeps model evaluations skipped, so it stays offline and does not use API credits. To run every case in `examples/cases.json` against the live model and retain every actual output:
+
+```bash
+conda run -n receipt-split pytest --run-model-evals
+```
+
+To run only case 4, use pytest's selector:
+
+```bash
+conda run -n receipt-split pytest --run-model-evals -k 04-individual-menu-items
+```
+
+Every live pytest invocation creates `artifacts/pytest/<run-id>/pytest-summary.json`. Only the selected cases appear below its `cases/` directory; each case keeps its own `draft.json`, `raw_response.json`, `evaluation.json`, `run.json`, and `timing.json`. For example, the case-4 command writes exactly one case's actual output.
+
 ## Synthetic phase-one fixtures
 
-`examples/receipts/` holds three generated, fictional Canadian receipts for cases 01–03; no real purchase data is included. `examples/cases.json` ties each image to its note, member set, and standard answer. Standard answers are supplied to the CLI only after model extraction, so they are used for scoring and never sent to the API.
+`examples/receipts/` holds fictional or user-supplied receipts for the configured cases; no real payment credentials are included. `examples/cases.json` ties each image to its note, member set, and standard answer. Standard answers are supplied to the CLI only after model extraction, so they are used for scoring and never sent to the API.
 
 Expected case 02 encodes the **extraction rule** (`Amy: 1200`, then all three share the remainder), rather than the derived final shares. Case 03 asserts `5650`, the paid total, rather than the `$50.00` subtotal.
 
