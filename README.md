@@ -38,11 +38,13 @@ Initialize a local ledger with its fixed member group, then confirm a reviewed `
 ```bash
 receipt-split-ledger init --database ledger.sqlite --members Doris,Amy,Ben
 receipt-split-ledger confirm path/to/draft.json \
-  --database ledger.sqlite --note 'Amy tea' --submission-id 'unique-client-id'
+  --database ledger.sqlite --note 'Amy tea' --submission-id 'unique-client-id' \
+  --uploader Doris --photo path/to/receipt.png --raw-response path/to/raw_response.json \
+  --model gpt-6-astra --prompt-version 2026-11-16.phase1-fee-proration
 receipt-split-ledger monthly 2026-02 --database ledger.sqlite
 ```
 
-The database has `members`, `expenses`, and `expense_shares` tables. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers.
+The database has `members`, `receipts`, and `receipt_shares` tables. `receipts` retains the original JPG/PNG bytes, SHA-256, raw model response, extraction draft, confirmation draft, and extractor version alongside its public accounting fields. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers. `ledger.sqlite` and its image BLOBs are ignored by Git.
 
 ## Offline checks (no API call)
 

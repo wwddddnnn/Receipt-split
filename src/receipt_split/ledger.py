@@ -1,42 +1,60 @@
-"""SQLite-backed confirmed expense ledger.
-
-The ledger is intentionally independent from the extraction provider: callers submit an
-editable, already-reviewed ExpenseDraft and the ledger validates and recalculates shares
-inside the confirmation transaction.
-"""
+"""SQLite-backed receipt ledger with immutable source snapshots."""
 
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from hashlib import sha256
 import json
 from pathlib import Path
 import sqlite3
-from typing import Iterator
+from typing import Any, Iterator
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .models import ExpenseDraft
 from .splitting import calculate_shares
 
 
 class LedgerValidationError(ValueError):
-    """Raised when a draft is not eligible to become a confirmed expense."""
+    """Raised when a receipt is not eligible to be confirmed."""
 
 
 class SubmissionConflictError(ValueError):
     """Raised when a submission ID is retried with different content."""
 
 
-class ConfirmedExpense(BaseModel):
-    expense_id: int
+class ReceiptProvenance(BaseModel):
+    """Original upload and extraction data retained with a confirmed receipt."""
+
+    uploader_id: str = Field(min_length=1)
+    photo_bytes: bytes = Field(min_length=1)
+    photo_mime_type: str = Field(pattern=r"^image/(jpeg|png)$")
+    raw_model_response: Any
+    extracted_draft: ExpenseDraft
+    extractor_model: str = Field(min_length=1)
+    prompt_version: str = Field(min_length=1)
+    source_run_id: str | None = None
+
+    @field_validator("uploader_id")
+    @classmethod
+    def strip_uploader_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be empty")
+        return value
+
+
+class ConfirmedReceipt(BaseModel):
+    receipt_id: int
     submission_id: str
     receipt_date: str
     total_cents: int
     subtotal_cents: int
     payer_id: str
+    uploader_id: str
     note: str
+    photo_sha256: str
     shares: dict[str, int]
     created: bool
 
@@ -60,31 +78,47 @@ CREATE TABLE IF NOT EXISTS members (
     member_id TEXT PRIMARY KEY
 );
 
-CREATE TABLE IF NOT EXISTS expenses (
-    expense_id INTEGER PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS receipts (
+    receipt_id INTEGER PRIMARY KEY,
     receipt_date TEXT NOT NULL,
     total_cents INTEGER NOT NULL CHECK (total_cents > 0),
     subtotal_cents INTEGER NOT NULL CHECK (subtotal_cents > 0 AND subtotal_cents <= total_cents),
     payer_id TEXT NOT NULL REFERENCES members(member_id),
+    uploader_id TEXT NOT NULL REFERENCES members(member_id),
     note TEXT NOT NULL,
     submission_id TEXT NOT NULL UNIQUE,
-    content_hash TEXT NOT NULL
+    content_hash TEXT NOT NULL,
+    photo_bytes BLOB NOT NULL,
+    photo_mime_type TEXT NOT NULL CHECK (photo_mime_type IN ('image/jpeg', 'image/png')),
+    photo_sha256 TEXT NOT NULL,
+    raw_model_response_json TEXT NOT NULL,
+    extracted_draft_json TEXT NOT NULL,
+    confirmed_draft_json TEXT NOT NULL,
+    extractor_model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    source_run_id TEXT,
+    created_at TEXT NOT NULL,
+    confirmed_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS expense_shares (
-    expense_id INTEGER NOT NULL REFERENCES expenses(expense_id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS receipt_shares (
+    receipt_id INTEGER NOT NULL REFERENCES receipts(receipt_id) ON DELETE CASCADE,
     member_id TEXT NOT NULL REFERENCES members(member_id),
     amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
-    PRIMARY KEY (expense_id, member_id)
+    PRIMARY KEY (receipt_id, member_id)
 );
 
-CREATE INDEX IF NOT EXISTS expenses_receipt_date_idx ON expenses(receipt_date);
-CREATE INDEX IF NOT EXISTS expense_shares_member_idx ON expense_shares(member_id);
+CREATE INDEX IF NOT EXISTS receipts_receipt_date_idx ON receipts(receipt_date);
+CREATE INDEX IF NOT EXISTS receipt_shares_member_idx ON receipt_shares(member_id);
 """
 
 
+def _compact_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
 class Ledger:
-    """A single-process SQLite ledger with idempotent expense confirmation."""
+    """A single-process SQLite ledger with idempotent receipt confirmation."""
 
     def __init__(self, database_path: str | Path):
         self.database_path = Path(database_path)
@@ -123,10 +157,15 @@ class Ledger:
                 ((member_id,) for member_id in normalized),
             )
 
-    def confirm_expense(
-        self, draft: ExpenseDraft, *, note: str, submission_id: str
-    ) -> ConfirmedExpense:
-        """Validate, recalculate, and atomically store a confirmed expense."""
+    def confirm_receipt(
+        self,
+        draft: ExpenseDraft,
+        *,
+        note: str,
+        submission_id: str,
+        provenance: ReceiptProvenance,
+    ) -> ConfirmedReceipt:
+        """Recalculate and atomically persist one reviewed receipt plus its source."""
         if not note.strip():
             raise LedgerValidationError("note must not be empty")
         if not submission_id.strip():
@@ -142,26 +181,31 @@ class Ledger:
         except ValueError as error:
             raise LedgerValidationError(str(error)) from error
 
+        photo_sha256 = sha256(provenance.photo_bytes).hexdigest()
+        extracted_draft = provenance.extracted_draft.model_dump(mode="json")
+        confirmed_draft = draft.model_dump(mode="json")
         payload = {
-            "receipt_date": draft.receipt_date,
-            "total_cents": draft.total_cents,
-            "subtotal_cents": draft.subtotal_cents,
-            "payer_id": draft.payer_id,
+            "confirmed_draft": confirmed_draft,
+            "extracted_draft": extracted_draft,
             "note": note,
-            "individual_charges": sorted(
-                (charge.model_dump(mode="json") for charge in draft.individual_charges),
-                key=lambda charge: (charge["member_id"], charge["amount_cents"]),
-            ),
-            "remainder_member_ids": sorted(draft.remainder_member_ids),
+            "photo_sha256": photo_sha256,
+            "photo_mime_type": provenance.photo_mime_type,
+            "raw_model_response": provenance.raw_model_response,
+            "uploader_id": provenance.uploader_id,
+            "extractor_model": provenance.extractor_model,
+            "prompt_version": provenance.prompt_version,
+            "source_run_id": provenance.source_run_id,
             "shares": shares,
         }
-        content_hash = sha256(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
-        ).hexdigest()
+        content_hash = sha256(_compact_json(payload).encode()).hexdigest()
+        raw_model_response_json = _compact_json(provenance.raw_model_response)
+        extracted_draft_json = _compact_json(extracted_draft)
+        confirmed_draft_json = _compact_json(confirmed_draft)
+        timestamp = datetime.now(UTC).isoformat()
 
         with self._transaction():
             existing = self.connection.execute(
-                "SELECT expense_id, content_hash FROM expenses WHERE submission_id = ?",
+                "SELECT receipt_id, content_hash FROM receipts WHERE submission_id = ?",
                 (submission_id,),
             ).fetchone()
             if existing is not None:
@@ -169,11 +213,12 @@ class Ledger:
                     raise SubmissionConflictError(
                         "submission_id already exists with different content"
                     )
-                return self._get_expense(existing["expense_id"], created=False)
+                return self._get_receipt(existing["receipt_id"], created=False)
 
-            required_members = set(shares) | {draft.payer_id}
+            required_members = set(shares) | {draft.payer_id, provenance.uploader_id}
+            placeholders = ",".join("?" for _ in required_members)
             rows = self.connection.execute(
-                f"SELECT member_id FROM members WHERE member_id IN ({','.join('?' for _ in required_members)})",
+                f"SELECT member_id FROM members WHERE member_id IN ({placeholders})",
                 tuple(sorted(required_members)),
             ).fetchall()
             known_members = {row["member_id"] for row in rows}
@@ -185,51 +230,50 @@ class Ledger:
 
             cursor = self.connection.execute(
                 """
-                INSERT INTO expenses(
-                    receipt_date, total_cents, subtotal_cents, payer_id, note, submission_id, content_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO receipts(
+                    receipt_date, total_cents, subtotal_cents, payer_id, uploader_id, note,
+                    submission_id, content_hash, photo_bytes, photo_mime_type, photo_sha256,
+                    raw_model_response_json, extracted_draft_json, confirmed_draft_json,
+                    extractor_model, prompt_version, source_run_id, created_at, confirmed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    draft.receipt_date,
-                    draft.total_cents,
-                    draft.subtotal_cents,
-                    draft.payer_id,
-                    note,
-                    submission_id,
-                    content_hash,
+                    draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id,
+                    provenance.uploader_id, note, submission_id, content_hash,
+                    sqlite3.Binary(provenance.photo_bytes), provenance.photo_mime_type, photo_sha256,
+                    raw_model_response_json, extracted_draft_json, confirmed_draft_json,
+                    provenance.extractor_model, provenance.prompt_version, provenance.source_run_id,
+                    timestamp, timestamp,
                 ),
             )
-            expense_id = cursor.lastrowid
+            receipt_id = cursor.lastrowid
             self.connection.executemany(
-                "INSERT INTO expense_shares(expense_id, member_id, amount_cents) VALUES (?, ?, ?)",
-                ((expense_id, member_id, amount_cents) for member_id, amount_cents in shares.items()),
+                "INSERT INTO receipt_shares(receipt_id, member_id, amount_cents) VALUES (?, ?, ?)",
+                ((receipt_id, member_id, amount_cents) for member_id, amount_cents in shares.items()),
             )
-            return self._get_expense(expense_id, created=True)
+            return self._get_receipt(receipt_id, created=True)
 
-    def _get_expense(self, expense_id: int, *, created: bool) -> ConfirmedExpense:
+    def _get_receipt(self, receipt_id: int, *, created: bool) -> ConfirmedReceipt:
         row = self.connection.execute(
             """
-            SELECT expense_id, receipt_date, total_cents, subtotal_cents, payer_id, note, submission_id
-            FROM expenses WHERE expense_id = ?
+            SELECT receipt_id, receipt_date, total_cents, subtotal_cents, payer_id, uploader_id,
+                   note, submission_id, photo_sha256
+            FROM receipts WHERE receipt_id = ?
             """,
-            (expense_id,),
+            (receipt_id,),
         ).fetchone()
         if row is None:
-            raise LookupError(f"expense does not exist: {expense_id}")
+            raise LookupError(f"receipt does not exist: {receipt_id}")
         share_rows = self.connection.execute(
-            "SELECT member_id, amount_cents FROM expense_shares WHERE expense_id = ? ORDER BY member_id",
-            (expense_id,),
+            "SELECT member_id, amount_cents FROM receipt_shares WHERE receipt_id = ? ORDER BY member_id",
+            (receipt_id,),
         ).fetchall()
-        return ConfirmedExpense(
-            expense_id=row["expense_id"],
-            submission_id=row["submission_id"],
-            receipt_date=row["receipt_date"],
-            total_cents=row["total_cents"],
-            subtotal_cents=row["subtotal_cents"],
-            payer_id=row["payer_id"],
-            note=row["note"],
-            shares={share["member_id"]: share["amount_cents"] for share in share_rows},
-            created=created,
+        return ConfirmedReceipt(
+            receipt_id=row["receipt_id"], submission_id=row["submission_id"],
+            receipt_date=row["receipt_date"], total_cents=row["total_cents"],
+            subtotal_cents=row["subtotal_cents"], payer_id=row["payer_id"],
+            uploader_id=row["uploader_id"], note=row["note"], photo_sha256=row["photo_sha256"],
+            shares={share["member_id"]: share["amount_cents"] for share in share_rows}, created=created,
         )
 
     def monthly_settlement(self, month: str) -> MonthlySettlement:
@@ -239,26 +283,15 @@ class Ledger:
             raise LedgerValidationError("month must use YYYY-MM") from error
         if len(month) != 7:
             raise LedgerValidationError("month must use YYYY-MM")
-
-        balances = {
-            row["member_id"]: 0
-            for row in self.connection.execute("SELECT member_id FROM members ORDER BY member_id")
-        }
+        balances = {row["member_id"]: 0 for row in self.connection.execute("SELECT member_id FROM members ORDER BY member_id")}
         paid_rows = self.connection.execute(
-            """
-            SELECT payer_id AS member_id, COALESCE(SUM(total_cents), 0) AS amount_cents
-            FROM expenses WHERE substr(receipt_date, 1, 7) = ? GROUP BY payer_id
-            """,
+            "SELECT payer_id AS member_id, COALESCE(SUM(total_cents), 0) AS amount_cents FROM receipts WHERE substr(receipt_date, 1, 7) = ? GROUP BY payer_id",
             (month,),
         ).fetchall()
         for row in paid_rows:
             balances[row["member_id"]] += row["amount_cents"]
         share_rows = self.connection.execute(
-            """
-            SELECT s.member_id, COALESCE(SUM(s.amount_cents), 0) AS amount_cents
-            FROM expense_shares s JOIN expenses e ON e.expense_id = s.expense_id
-            WHERE substr(e.receipt_date, 1, 7) = ? GROUP BY s.member_id
-            """,
+            "SELECT s.member_id, COALESCE(SUM(s.amount_cents), 0) AS amount_cents FROM receipt_shares s JOIN receipts r ON r.receipt_id = s.receipt_id WHERE substr(r.receipt_date, 1, 7) = ? GROUP BY s.member_id",
             (month,),
         ).fetchall()
         for row in share_rows:
@@ -272,13 +305,7 @@ class Ledger:
             creditor_id, receivable = creditors[creditor_index]
             debtor_id, payable = debtors[debtor_index]
             amount = min(receivable, payable)
-            transfers.append(
-                TransferSuggestion(
-                    from_member_id=debtor_id,
-                    to_member_id=creditor_id,
-                    amount_cents=amount,
-                )
-            )
+            transfers.append(TransferSuggestion(from_member_id=debtor_id, to_member_id=creditor_id, amount_cents=amount))
             creditors[creditor_index][1] -= amount
             debtors[debtor_index][1] -= amount
             if creditors[creditor_index][1] == 0:
