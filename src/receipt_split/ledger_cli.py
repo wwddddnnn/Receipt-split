@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .ledger import Ledger, ReceiptProvenance
+from .ledger import Ledger, ReceiptPhoto, ReceiptProvenance
 from .models import ExpenseDraft
 
 
@@ -26,7 +26,10 @@ def _parser() -> argparse.ArgumentParser:
     confirm.add_argument("--note", required=True)
     confirm.add_argument("--submission-id", required=True)
     confirm.add_argument("--uploader", required=True)
-    confirm.add_argument("--photo", type=Path, required=True)
+    confirm.add_argument(
+        "--photo", type=Path, required=True, action="append",
+        help="receipt image; repeat --photo for a multi-image receipt",
+    )
     confirm.add_argument("--raw-response", type=Path, required=True)
     confirm.add_argument("--model", required=True)
     confirm.add_argument("--prompt-version", required=True)
@@ -45,12 +48,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"database": str(args.database), "members": args.members}))
         elif args.command == "confirm":
             draft = ExpenseDraft.model_validate_json(args.draft.read_text())
-            suffix = args.photo.suffix.lower()
-            mime_type = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+            photos = []
+            for photo_path in args.photo:
+                suffix = photo_path.suffix.lower()
+                mime_type = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+                photos.append(ReceiptPhoto(image_bytes=photo_path.read_bytes(), mime_type=mime_type))
             provenance = ReceiptProvenance(
                 uploader_id=args.uploader,
-                photo_bytes=args.photo.read_bytes(),
-                photo_mime_type=mime_type,
+                photos=photos,
                 raw_model_response=json.loads(args.raw_response.read_text()),
                 extracted_draft=draft,
                 extractor_model=args.model,

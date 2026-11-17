@@ -1,12 +1,14 @@
 import json
 from hashlib import sha256
 from pathlib import Path
+import sqlite3
 
 import pytest
 
 from receipt_split.ledger import (
     Ledger,
     LedgerValidationError,
+    ReceiptPhoto,
     ReceiptProvenance,
     SubmissionConflictError,
 )
@@ -14,6 +16,7 @@ from receipt_split.models import Clarification, ExpenseDraft, IndividualCharge
 
 
 PHOTO_BYTES = b"\x89PNG\r\n\x1a\nsynthetic-receipt"
+SECOND_PHOTO_BYTES = b"\x89PNG\r\n\x1a\nsynthetic-receipt-page-two"
 
 
 def _case_two_draft() -> ExpenseDraft:
@@ -40,8 +43,7 @@ def _third_party_draft() -> ExpenseDraft:
 def _provenance(draft: ExpenseDraft, *, uploader_id: str = "CindyTest") -> ReceiptProvenance:
     return ReceiptProvenance(
         uploader_id=uploader_id,
-        photo_bytes=PHOTO_BYTES,
-        photo_mime_type="image/png",
+        photos=[ReceiptPhoto(image_bytes=PHOTO_BYTES, mime_type="image/png")],
         raw_model_response={"id": "response-test", "output_text": "synthetic"},
         extracted_draft=draft,
         extractor_model="gpt-6-astra",
@@ -65,11 +67,15 @@ def test_confirm_persists_public_and_original_receipt_data(ledger: Ledger):
 
     assert confirmed.created is True
     assert confirmed.shares == {"AmyTest": 2_904, "BenTest": 1_548, "CindyTest": 1_548}
-    assert confirmed.photo_sha256 == sha256(PHOTO_BYTES).hexdigest()
+    assert confirmed.photo_sha256s == [sha256(PHOTO_BYTES).hexdigest()]
+    assert confirmed.photo_paths == [f"objects/{sha256(PHOTO_BYTES).hexdigest()}.png"]
     row = ledger.connection.execute("SELECT * FROM receipts").fetchone()
     assert row["uploader_id"] == "CindyTest"
-    assert row["photo_bytes"] == PHOTO_BYTES
-    assert row["photo_mime_type"] == "image/png"
+    assert json.loads(row["photo_paths_json"]) == confirmed.photo_paths
+    assert json.loads(row["photo_mime_types_json"]) == ["image/png"]
+    assert json.loads(row["photo_sha256_json"]) == confirmed.photo_sha256s
+    assert "photo_bytes" not in row.keys()
+    assert (ledger.database_path.parent / confirmed.photo_paths[0]).read_bytes() == PHOTO_BYTES
     assert json.loads(row["raw_model_response_json"])["id"] == "response-test"
     assert json.loads(row["extracted_draft_json"])["total_cents"] == 6_000
     assert json.loads(row["confirmed_draft_json"]) == draft.model_dump(mode="json")
@@ -97,6 +103,87 @@ def test_same_submission_and_content_is_idempotent(ledger: Ledger):
     assert first.receipt_id == retry.receipt_id
     assert retry.created is False
     assert ledger.connection.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 1
+
+
+def test_receipt_can_store_ordered_paths_for_multiple_images(ledger: Ledger):
+    draft = _case_two_draft()
+    provenance = _provenance(draft)
+    provenance.photos.append(ReceiptPhoto(image_bytes=SECOND_PHOTO_BYTES, mime_type="image/png"))
+
+    receipt = ledger.confirm_receipt(
+        draft, note="two-page receipt", submission_id="two-pages", provenance=provenance
+    )
+
+    expected_paths = [
+        f"objects/{sha256(PHOTO_BYTES).hexdigest()}.png",
+        f"objects/{sha256(SECOND_PHOTO_BYTES).hexdigest()}.png",
+    ]
+    assert receipt.photo_paths == expected_paths
+    assert [
+        (ledger.database_path.parent / path).read_bytes() for path in receipt.photo_paths
+    ] == [PHOTO_BYTES, SECOND_PHOTO_BYTES]
+
+
+def test_legacy_blob_is_exported_and_replaced_with_path_list(tmp_path: Path):
+    database_path = tmp_path / "legacy.sqlite"
+    database = sqlite3.connect(database_path)
+    database.executescript(
+        """
+        CREATE TABLE members (member_id TEXT PRIMARY KEY);
+        CREATE TABLE receipts (
+            receipt_id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            receipt_date TEXT,
+            total_cents INTEGER,
+            subtotal_cents INTEGER,
+            payer_id TEXT,
+            uploader_id TEXT NOT NULL,
+            note TEXT NOT NULL,
+            submission_id TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            photo_bytes BLOB NOT NULL,
+            photo_mime_type TEXT NOT NULL,
+            photo_sha256 TEXT NOT NULL,
+            raw_model_response_json TEXT NOT NULL,
+            extracted_draft_json TEXT NOT NULL,
+            confirmed_draft_json TEXT NOT NULL,
+            extractor_model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            source_run_id TEXT,
+            created_at TEXT NOT NULL,
+            confirmed_at TEXT
+        );
+        CREATE TABLE receipt_shares (
+            receipt_id INTEGER NOT NULL,
+            member_id TEXT NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            PRIMARY KEY (receipt_id, member_id)
+        );
+        """
+    )
+    draft = _case_two_draft().model_dump(mode="json")
+    database.execute("INSERT INTO members(member_id) VALUES ('CindyTest')")
+    database.execute(
+        """
+        INSERT INTO receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            1, "pending", None, 6_000, 5_310, "CindyTest", "CindyTest", "original note",
+            "legacy", "old-hash", PHOTO_BYTES, "image/png", sha256(PHOTO_BYTES).hexdigest(),
+            json.dumps({"id": "response"}), json.dumps(draft), json.dumps(draft), "test-model",
+            "test-prompt", None, "2026-11-17T00:00:00+00:00", None,
+        ),
+    )
+    database.commit()
+    database.close()
+
+    with Ledger(database_path) as ledger:
+        row = ledger.connection.execute("SELECT * FROM receipts WHERE receipt_id = 1").fetchone()
+        assert "photo_bytes" not in row.keys()
+        assert json.loads(row["photo_paths_json"]) == [
+            f"objects/{sha256(PHOTO_BYTES).hexdigest()}.png"
+        ]
+        assert (tmp_path / json.loads(row["photo_paths_json"])[0]).read_bytes() == PHOTO_BYTES
 
 
 def test_same_submission_with_different_content_conflicts(ledger: Ledger):

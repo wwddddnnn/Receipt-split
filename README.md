@@ -75,7 +75,7 @@ receipt-split-ledger confirm path/to/draft.json \
 receipt-split-ledger monthly 2026-02 --database ledger.sqlite
 ```
 
-The database has `members`, `receipts`, and `receipt_shares` tables. `receipts` retains the original JPG/PNG bytes, SHA-256, raw model response, extraction draft, confirmation draft, and extractor version alongside its public accounting fields. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers. `ledger.sqlite` and its image BLOBs are ignored by Git.
+The database has `members`, `receipts`, and `receipt_shares` tables. `receipts.photo_paths_json` is a JSON list of relative image addresses, such as `["objects/abc123.png"]`; images themselves are immutable files in the database-adjacent `objects/` directory. MIME types and SHA-256 values are stored as aligned JSON lists for audit. Raw model response, extraction draft, confirmation draft, and extractor version remain in SQLite. A legacy database is migrated automatically: each existing image BLOB is exported to `objects/` and then removed from SQLite. Repeat `--photo` to associate several ordered images with one receipt. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers. `ledger.sqlite` and `objects/` are ignored by Git.
 
 ## Offline checks (no API call)
 

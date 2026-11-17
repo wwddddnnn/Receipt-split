@@ -10,3 +10,4 @@ runs/
 *.sqlite-*
 data/*
 !data/.gitkeep
+objects/
