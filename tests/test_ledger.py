@@ -45,10 +45,8 @@ def _provenance(draft: ExpenseDraft, *, uploader_id: str = "CindyTest") -> Recei
         uploader_id=uploader_id,
         photos=[ReceiptPhoto(image_bytes=PHOTO_BYTES, mime_type="image/png")],
         raw_model_response={"id": "response-test", "output_text": "synthetic"},
-        extracted_draft=draft,
         extractor_model="gpt-6-astra",
         prompt_version="test-v1",
-        source_run_id="20261117T000000Z-test",
     )
 
 
@@ -67,17 +65,13 @@ def test_confirm_persists_public_and_original_receipt_data(ledger: Ledger):
 
     assert confirmed.created is True
     assert confirmed.shares == {"AmyTest": 2_904, "BenTest": 1_548, "CindyTest": 1_548}
-    assert confirmed.photo_sha256s == [sha256(PHOTO_BYTES).hexdigest()]
     assert confirmed.photo_paths == [f"objects/{sha256(PHOTO_BYTES).hexdigest()}.png"]
     row = ledger.connection.execute("SELECT * FROM receipts").fetchone()
     assert row["uploader_id"] == "CindyTest"
     assert json.loads(row["photo_paths_json"]) == confirmed.photo_paths
-    assert json.loads(row["photo_mime_types_json"]) == ["image/png"]
-    assert json.loads(row["photo_sha256_json"]) == confirmed.photo_sha256s
     assert "photo_bytes" not in row.keys()
     assert (ledger.database_path.parent / confirmed.photo_paths[0]).read_bytes() == PHOTO_BYTES
     assert json.loads(row["raw_model_response_json"])["id"] == "response-test"
-    assert json.loads(row["extracted_draft_json"])["total_cents"] == 6_000
     assert json.loads(row["confirmed_draft_json"]) == draft.model_dump(mode="json")
     assert ledger.connection.execute("SELECT COUNT(*) FROM receipt_shares").fetchone()[0] == 3
     table_names = {
@@ -89,6 +83,12 @@ def test_confirm_persists_public_and_original_receipt_data(ledger: Ledger):
     assert {"members", "receipts", "receipt_shares"} <= table_names
     assert "expenses" not in table_names
     assert "expense_shares" not in table_names
+    assert not {
+        "photo_mime_types_json",
+        "photo_sha256_json",
+        "extracted_draft_json",
+        "source_run_id",
+    } & set(row.keys())
 
 
 def test_same_submission_and_content_is_idempotent(ledger: Ledger):

@@ -33,7 +33,6 @@ def _parser() -> argparse.ArgumentParser:
     confirm.add_argument("--raw-response", type=Path, required=True)
     confirm.add_argument("--model", required=True)
     confirm.add_argument("--prompt-version", required=True)
-    confirm.add_argument("--source-run-id")
     monthly = subparsers.add_parser("monthly", help="show balances and transfer suggestions")
     monthly.add_argument("month", help="YYYY-MM")
     monthly.add_argument("--database", type=Path, default=Path("ledger.sqlite"))
@@ -63,10 +62,8 @@ def main(argv: list[str] | None = None) -> int:
                 uploader_id=args.uploader,
                 photos=photos,
                 raw_model_response=json.loads(args.raw_response.read_text()),
-                extracted_draft=draft,
                 extractor_model=args.model,
                 prompt_version=args.prompt_version,
-                source_run_id=args.source_run_id,
             )
             result = ledger.confirm_receipt(
                 draft, note=args.note, submission_id=args.submission_id, provenance=provenance

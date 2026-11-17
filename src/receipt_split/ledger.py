@@ -38,10 +38,8 @@ class ReceiptProvenance(BaseModel):
     uploader_id: str = Field(min_length=1)
     photos: list[ReceiptPhoto] = Field(min_length=1)
     raw_model_response: Any
-    extracted_draft: ExpenseDraft
     extractor_model: str = Field(min_length=1)
     prompt_version: str = Field(min_length=1)
-    source_run_id: str | None = None
 
     @field_validator("uploader_id")
     @classmethod
@@ -63,7 +61,6 @@ class ConfirmedReceipt(BaseModel):
     uploader_id: str
     note: str
     photo_paths: list[str]
-    photo_sha256s: list[str]
     shares: dict[str, int]
     created: bool
 
@@ -94,14 +91,10 @@ CREATE TABLE receipts (
     submission_id TEXT NOT NULL UNIQUE,
     content_hash TEXT NOT NULL,
     photo_paths_json TEXT NOT NULL,
-    photo_mime_types_json TEXT NOT NULL,
-    photo_sha256_json TEXT NOT NULL,
     raw_model_response_json TEXT NOT NULL,
-    extracted_draft_json TEXT NOT NULL,
     confirmed_draft_json TEXT NOT NULL,
     extractor_model TEXT NOT NULL,
     prompt_version TEXT NOT NULL,
-    source_run_id TEXT,
     created_at TEXT NOT NULL,
     confirmed_at TEXT
 )
@@ -160,7 +153,7 @@ class Ledger:
             self.connection.execute("VACUUM")
 
     def _migrate_receipts_schema_if_needed(self) -> bool:
-        """Export legacy image BLOBs and replace them with path-list metadata."""
+        """Migrate legacy BLOB or verbose-path schemas to the minimal schema."""
         table_exists = self.connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'receipts'"
         ).fetchone()
@@ -169,20 +162,30 @@ class Ledger:
         columns = {
             row["name"] for row in self.connection.execute("PRAGMA table_info(receipts)")
         }
-        if "photo_paths_json" in columns:
+        required_columns = {
+            "receipt_id", "status", "receipt_date", "total_cents", "subtotal_cents", "payer_id",
+            "uploader_id", "note", "submission_id", "content_hash", "photo_paths_json",
+            "raw_model_response_json", "confirmed_draft_json", "extractor_model", "prompt_version",
+            "created_at", "confirmed_at",
+        }
+        if columns == required_columns:
             return False
-        if "photo_bytes" not in columns:
+        if "photo_bytes" not in columns and "photo_paths_json" not in columns:
             raise RuntimeError("receipts has an unsupported image-storage schema")
 
         legacy_rows = list(self.connection.execute("SELECT * FROM receipts ORDER BY receipt_id"))
         migrated_rows: list[dict[str, Any]] = []
         for row in legacy_rows:
             values = dict(row)
-            mime_type = values["photo_mime_type"]
-            photo_bytes = values["photo_bytes"]
-            photo_sha256 = values.get("photo_sha256") or sha256(photo_bytes).hexdigest()
-            reference = self._photo_reference(photo_sha256, mime_type)
-            self._persist_photo(reference, photo_bytes)
+            if "photo_bytes" in columns:
+                mime_type = values["photo_mime_type"]
+                image_bytes = values["photo_bytes"]
+                image_hash = values.get("photo_sha256") or sha256(image_bytes).hexdigest()
+                reference = self._photo_reference(image_hash, mime_type)
+                self._persist_photo(reference, image_bytes)
+                photo_paths = [reference["path"]]
+            else:
+                photo_paths = json.loads(values["photo_paths_json"])
             status = values.get("status", "confirmed")
             shares = {
                 share["member_id"]: share["amount_cents"]
@@ -194,25 +197,22 @@ class Ledger:
             confirmed_at = values.get("confirmed_at")
             if status == "confirmed" and confirmed_at is None:
                 confirmed_at = values["created_at"]
-            content_hash = self._content_hash(
-                confirmed_draft=json.loads(values["confirmed_draft_json"]),
-                extracted_draft=json.loads(values["extracted_draft_json"]),
-                note=values["note"],
-                photo_references=[reference],
-                raw_model_response=json.loads(values["raw_model_response_json"]),
-                uploader_id=values["uploader_id"],
-                extractor_model=values["extractor_model"],
-                prompt_version=values["prompt_version"],
-                source_run_id=values.get("source_run_id"),
-                status=status,
-                shares=shares,
-            )
             migrated_rows.append({
                 **values,
                 "status": status,
                 "confirmed_at": confirmed_at,
-                "content_hash": content_hash,
-                "photo_references": [reference],
+                "photo_paths": photo_paths,
+                "content_hash": self._content_hash(
+                    confirmed_draft=json.loads(values["confirmed_draft_json"]),
+                    note=values["note"],
+                    photo_paths=photo_paths,
+                    raw_model_response=json.loads(values["raw_model_response_json"]),
+                    uploader_id=values["uploader_id"],
+                    extractor_model=values["extractor_model"],
+                    prompt_version=values["prompt_version"],
+                    status=status,
+                    shares=shares,
+                ),
             })
 
         self.connection.execute("PRAGMA foreign_keys = OFF")
@@ -223,27 +223,22 @@ class Ledger:
             self.connection.execute(CREATE_RECEIPTS_TABLE)
             self.connection.execute(CREATE_RECEIPT_SHARES_TABLE)
             for row in migrated_rows:
-                refs = row["photo_references"]
                 self.connection.execute(
                     """
                     INSERT INTO receipts(
                         receipt_id, status, receipt_date, total_cents, subtotal_cents, payer_id,
                         uploader_id, note, submission_id, content_hash, photo_paths_json,
-                        photo_mime_types_json, photo_sha256_json, raw_model_response_json,
-                        extracted_draft_json, confirmed_draft_json, extractor_model, prompt_version,
-                        source_run_id, created_at, confirmed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        raw_model_response_json, confirmed_draft_json, extractor_model, prompt_version,
+                        created_at, confirmed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         row["receipt_id"], row["status"], row["receipt_date"], row["total_cents"],
                         row["subtotal_cents"], row["payer_id"], row["uploader_id"], row["note"],
-                        row["submission_id"], row["content_hash"],
-                        _compact_json([ref["path"] for ref in refs]),
-                        _compact_json([ref["mime_type"] for ref in refs]),
-                        _compact_json([ref["sha256"] for ref in refs]),
-                        row["raw_model_response_json"], row["extracted_draft_json"],
-                        row["confirmed_draft_json"], row["extractor_model"], row["prompt_version"],
-                        row.get("source_run_id"), row["created_at"], row["confirmed_at"],
+                        row["submission_id"], row["content_hash"], _compact_json(row["photo_paths"]),
+                        row["raw_model_response_json"], row["confirmed_draft_json"],
+                        row["extractor_model"], row["prompt_version"], row["created_at"],
+                        row["confirmed_at"],
                     ),
                 )
             self.connection.execute(
@@ -317,27 +312,23 @@ class Ledger:
     def _content_hash(
         *,
         confirmed_draft: dict[str, Any],
-        extracted_draft: dict[str, Any],
         note: str,
-        photo_references: list[dict[str, str]],
+        photo_paths: list[str],
         raw_model_response: Any,
         uploader_id: str,
         extractor_model: str,
         prompt_version: str,
-        source_run_id: str | None,
         status: str,
         shares: dict[str, int],
     ) -> str:
         payload = {
             "confirmed_draft": confirmed_draft,
-            "extracted_draft": extracted_draft,
             "note": note,
-            "photos": photo_references,
+            "photo_paths": photo_paths,
             "raw_model_response": raw_model_response,
             "uploader_id": uploader_id,
             "extractor_model": extractor_model,
             "prompt_version": prompt_version,
-            "source_run_id": source_run_id,
             "status": status,
             "shares": shares,
         }
@@ -379,23 +370,19 @@ class Ledger:
                 raise LedgerValidationError(str(error)) from error
 
         photo_references = self._photo_references(provenance.photos)
-        extracted_draft = provenance.extracted_draft.model_dump(mode="json")
         confirmed_draft = draft.model_dump(mode="json")
         content_hash = self._content_hash(
             confirmed_draft=confirmed_draft,
-            extracted_draft=extracted_draft,
             note=note,
-            photo_references=photo_references,
+            photo_paths=[reference["path"] for reference in photo_references],
             raw_model_response=provenance.raw_model_response,
             uploader_id=provenance.uploader_id,
             extractor_model=provenance.extractor_model,
             prompt_version=provenance.prompt_version,
-            source_run_id=provenance.source_run_id,
             status=status,
             shares=shares,
         )
         raw_model_response_json = _compact_json(provenance.raw_model_response)
-        extracted_draft_json = _compact_json(extracted_draft)
         confirmed_draft_json = _compact_json(confirmed_draft)
         timestamp = datetime.now(UTC).isoformat()
 
@@ -428,21 +415,16 @@ class Ledger:
                 """
                 INSERT INTO receipts(
                     status, receipt_date, total_cents, subtotal_cents, payer_id, uploader_id, note,
-                    submission_id, content_hash, photo_paths_json, photo_mime_types_json,
-                    photo_sha256_json, raw_model_response_json, extracted_draft_json,
-                    confirmed_draft_json, extractor_model, prompt_version, source_run_id, created_at,
-                    confirmed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    submission_id, content_hash, photo_paths_json, raw_model_response_json,
+                    confirmed_draft_json, extractor_model, prompt_version, created_at, confirmed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     status, draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id,
                     provenance.uploader_id, note, submission_id, content_hash,
                     _compact_json([reference["path"] for reference in photo_references]),
-                    _compact_json([reference["mime_type"] for reference in photo_references]),
-                    _compact_json([reference["sha256"] for reference in photo_references]),
-                    raw_model_response_json, extracted_draft_json, confirmed_draft_json,
-                    provenance.extractor_model, provenance.prompt_version, provenance.source_run_id,
-                    timestamp, timestamp if status == "confirmed" else None,
+                    raw_model_response_json, confirmed_draft_json, provenance.extractor_model,
+                    provenance.prompt_version, timestamp, timestamp if status == "confirmed" else None,
                 ),
             )
             receipt_id = cursor.lastrowid
@@ -456,7 +438,7 @@ class Ledger:
         row = self.connection.execute(
             """
             SELECT receipt_id, status, receipt_date, total_cents, subtotal_cents, payer_id, uploader_id,
-                   note, submission_id, photo_paths_json, photo_sha256_json
+                   note, submission_id, photo_paths_json
             FROM receipts WHERE receipt_id = ?
             """,
             (receipt_id,),
@@ -473,7 +455,6 @@ class Ledger:
             subtotal_cents=row["subtotal_cents"], payer_id=row["payer_id"],
             uploader_id=row["uploader_id"], note=row["note"],
             photo_paths=json.loads(row["photo_paths_json"]),
-            photo_sha256s=json.loads(row["photo_sha256_json"]),
             shares={share["member_id"]: share["amount_cents"] for share in share_rows}, created=created,
         )
 
