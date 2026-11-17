@@ -25,6 +25,8 @@ The default model is `gpt-6-astra`; override it with `--model` when desired. Eac
 
 `artifacts/latest` always points to the newest run, so inspect the latest parsed response with `conda run -n receipt-split python -m json.tool artifacts/latest/draft.json`; use `raw_response.json` for the complete API response and `evaluation.json` when an expected answer was supplied.
 
+Evaluation checks whether each clarification identifies the expected field, but its natural-language `reason` is retained for review rather than scored verbatim.
+
 ### Fee allocation
 
 The draft records the items/services subtotal separately from the paid total. `individual_charges` contain pre-fee item ownership; any unassigned subtotal is split over `remainder_member_ids`. Tax, tip, service, delivery, and other fees are then allocated proportionally to each member's resulting pre-fee subtotal. Fractional cents use the largest-remainder method, with member ID as the deterministic tie-breaker.

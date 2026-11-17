@@ -44,6 +44,31 @@ def test_assignment_lists_are_evaluated_without_regard_to_order():
     assert _evaluate(actual, expected) == []
 
 
+def test_clarification_reason_text_does_not_affect_evaluation():
+    expected = {
+        "needs_clarification": [
+            {"field": "receipt_date", "reason": "The receipt date is not visible."}
+        ]
+    }
+    actual = {
+        "needs_clarification": [
+            {
+                "field": "receipt_date",
+                "reason": "The receipt date is not visible in the image. Please provide the date.",
+            }
+        ]
+    }
+
+    assert _evaluate(actual, expected) == []
+    assert _evaluate({"needs_clarification": []}, expected) == [
+        {
+            "field": "needs_clarification",
+            "expected": ["receipt_date"],
+            "actual": [],
+        }
+    ]
+
+
 def test_invalid_photo_creates_diagnostic_artifact(tmp_path: Path):
     artifact_root = tmp_path / "artifacts"
     status = main([
