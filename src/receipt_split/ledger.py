@@ -48,10 +48,11 @@ class ReceiptProvenance(BaseModel):
 class ConfirmedReceipt(BaseModel):
     receipt_id: int
     submission_id: str
-    receipt_date: str
-    total_cents: int
-    subtotal_cents: int
-    payer_id: str
+    status: str
+    receipt_date: str | None
+    total_cents: int | None
+    subtotal_cents: int | None
+    payer_id: str | None
     uploader_id: str
     note: str
     photo_sha256: str
@@ -80,10 +81,11 @@ CREATE TABLE IF NOT EXISTS members (
 
 CREATE TABLE IF NOT EXISTS receipts (
     receipt_id INTEGER PRIMARY KEY,
-    receipt_date TEXT NOT NULL,
-    total_cents INTEGER NOT NULL CHECK (total_cents > 0),
-    subtotal_cents INTEGER NOT NULL CHECK (subtotal_cents > 0 AND subtotal_cents <= total_cents),
-    payer_id TEXT NOT NULL REFERENCES members(member_id),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed')),
+    receipt_date TEXT,
+    total_cents INTEGER CHECK (total_cents > 0),
+    subtotal_cents INTEGER CHECK (subtotal_cents > 0 AND subtotal_cents <= total_cents),
+    payer_id TEXT REFERENCES members(member_id),
     uploader_id TEXT NOT NULL REFERENCES members(member_id),
     note TEXT NOT NULL,
     submission_id TEXT NOT NULL UNIQUE,
@@ -98,7 +100,7 @@ CREATE TABLE IF NOT EXISTS receipts (
     prompt_version TEXT NOT NULL,
     source_run_id TEXT,
     created_at TEXT NOT NULL,
-    confirmed_at TEXT NOT NULL
+    confirmed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS receipt_shares (
@@ -125,7 +127,80 @@ class Ledger:
         self.connection = sqlite3.connect(self.database_path)
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
+        self._migrate_receipts_schema_if_needed()
         self.connection.executescript(SCHEMA)
+
+    def _migrate_receipts_schema_if_needed(self) -> None:
+        """Upgrade the first receipts schema so pending records can omit facts."""
+        table_exists = self.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'receipts'"
+        ).fetchone()
+        if table_exists is None:
+            return
+        columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(receipts)")
+        }
+        if "status" in columns:
+            return
+        self.connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self.connection.executescript(
+                """
+                BEGIN;
+                ALTER TABLE receipt_shares RENAME TO receipt_shares_v1;
+                ALTER TABLE receipts RENAME TO receipts_v1;
+                CREATE TABLE receipts (
+                    receipt_id INTEGER PRIMARY KEY,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed')),
+                    receipt_date TEXT,
+                    total_cents INTEGER CHECK (total_cents > 0),
+                    subtotal_cents INTEGER CHECK (subtotal_cents > 0 AND subtotal_cents <= total_cents),
+                    payer_id TEXT REFERENCES members(member_id),
+                    uploader_id TEXT NOT NULL REFERENCES members(member_id),
+                    note TEXT NOT NULL,
+                    submission_id TEXT NOT NULL UNIQUE,
+                    content_hash TEXT NOT NULL,
+                    photo_bytes BLOB NOT NULL,
+                    photo_mime_type TEXT NOT NULL CHECK (photo_mime_type IN ('image/jpeg', 'image/png')),
+                    photo_sha256 TEXT NOT NULL,
+                    raw_model_response_json TEXT NOT NULL,
+                    extracted_draft_json TEXT NOT NULL,
+                    confirmed_draft_json TEXT NOT NULL,
+                    extractor_model TEXT NOT NULL,
+                    prompt_version TEXT NOT NULL,
+                    source_run_id TEXT,
+                    created_at TEXT NOT NULL,
+                    confirmed_at TEXT
+                );
+                INSERT INTO receipts(
+                    receipt_id, status, receipt_date, total_cents, subtotal_cents, payer_id,
+                    uploader_id, note, submission_id, content_hash, photo_bytes, photo_mime_type,
+                    photo_sha256, raw_model_response_json, extracted_draft_json,
+                    confirmed_draft_json, extractor_model, prompt_version, source_run_id,
+                    created_at, confirmed_at
+                )
+                SELECT
+                    receipt_id, 'confirmed', receipt_date, total_cents, subtotal_cents, payer_id,
+                    uploader_id, note, submission_id, content_hash, photo_bytes, photo_mime_type,
+                    photo_sha256, raw_model_response_json, extracted_draft_json,
+                    confirmed_draft_json, extractor_model, prompt_version, source_run_id,
+                    created_at, confirmed_at
+                FROM receipts_v1;
+                CREATE TABLE receipt_shares (
+                    receipt_id INTEGER NOT NULL REFERENCES receipts(receipt_id) ON DELETE CASCADE,
+                    member_id TEXT NOT NULL REFERENCES members(member_id),
+                    amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+                    PRIMARY KEY (receipt_id, member_id)
+                );
+                INSERT INTO receipt_shares(receipt_id, member_id, amount_cents)
+                SELECT receipt_id, member_id, amount_cents FROM receipt_shares_v1;
+                DROP TABLE receipt_shares_v1;
+                DROP TABLE receipts_v1;
+                COMMIT;
+                """
+            )
+        finally:
+            self.connection.execute("PRAGMA foreign_keys = ON")
 
     def close(self) -> None:
         self.connection.close()
@@ -170,16 +245,17 @@ class Ledger:
             raise LedgerValidationError("note must not be empty")
         if not submission_id.strip():
             raise LedgerValidationError("submission_id must not be empty")
-        if draft.needs_clarification:
-            raise LedgerValidationError("resolve needs_clarification before confirming")
-        if draft.receipt_date is None or draft.total_cents is None or draft.subtotal_cents is None:
-            raise LedgerValidationError("receipt_date, total_cents, and subtotal_cents are required")
-        if draft.payer_id is None:
-            raise LedgerValidationError("payer_id is required")
-        try:
-            shares = calculate_shares(draft)
-        except ValueError as error:
-            raise LedgerValidationError(str(error)) from error
+        required_facts_missing = any(
+            value is None
+            for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id)
+        )
+        status = "pending" if draft.needs_clarification or required_facts_missing else "confirmed"
+        shares: dict[str, int] = {}
+        if status == "confirmed":
+            try:
+                shares = calculate_shares(draft)
+            except ValueError as error:
+                raise LedgerValidationError(str(error)) from error
 
         photo_sha256 = sha256(provenance.photo_bytes).hexdigest()
         extracted_draft = provenance.extracted_draft.model_dump(mode="json")
@@ -195,6 +271,7 @@ class Ledger:
             "extractor_model": provenance.extractor_model,
             "prompt_version": provenance.prompt_version,
             "source_run_id": provenance.source_run_id,
+            "status": status,
             "shares": shares,
         }
         content_hash = sha256(_compact_json(payload).encode()).hexdigest()
@@ -215,7 +292,9 @@ class Ledger:
                     )
                 return self._get_receipt(existing["receipt_id"], created=False)
 
-            required_members = set(shares) | {draft.payer_id, provenance.uploader_id}
+            required_members = set(shares) | {provenance.uploader_id}
+            if draft.payer_id is not None:
+                required_members.add(draft.payer_id)
             placeholders = ",".join("?" for _ in required_members)
             rows = self.connection.execute(
                 f"SELECT member_id FROM members WHERE member_id IN ({placeholders})",
@@ -231,19 +310,19 @@ class Ledger:
             cursor = self.connection.execute(
                 """
                 INSERT INTO receipts(
-                    receipt_date, total_cents, subtotal_cents, payer_id, uploader_id, note,
+                    status, receipt_date, total_cents, subtotal_cents, payer_id, uploader_id, note,
                     submission_id, content_hash, photo_bytes, photo_mime_type, photo_sha256,
                     raw_model_response_json, extracted_draft_json, confirmed_draft_json,
                     extractor_model, prompt_version, source_run_id, created_at, confirmed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id,
+                    status, draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id,
                     provenance.uploader_id, note, submission_id, content_hash,
                     sqlite3.Binary(provenance.photo_bytes), provenance.photo_mime_type, photo_sha256,
                     raw_model_response_json, extracted_draft_json, confirmed_draft_json,
                     provenance.extractor_model, provenance.prompt_version, provenance.source_run_id,
-                    timestamp, timestamp,
+                    timestamp, timestamp if status == "confirmed" else None,
                 ),
             )
             receipt_id = cursor.lastrowid
@@ -256,7 +335,7 @@ class Ledger:
     def _get_receipt(self, receipt_id: int, *, created: bool) -> ConfirmedReceipt:
         row = self.connection.execute(
             """
-            SELECT receipt_id, receipt_date, total_cents, subtotal_cents, payer_id, uploader_id,
+            SELECT receipt_id, status, receipt_date, total_cents, subtotal_cents, payer_id, uploader_id,
                    note, submission_id, photo_sha256
             FROM receipts WHERE receipt_id = ?
             """,
@@ -269,7 +348,7 @@ class Ledger:
             (receipt_id,),
         ).fetchall()
         return ConfirmedReceipt(
-            receipt_id=row["receipt_id"], submission_id=row["submission_id"],
+            receipt_id=row["receipt_id"], submission_id=row["submission_id"], status=row["status"],
             receipt_date=row["receipt_date"], total_cents=row["total_cents"],
             subtotal_cents=row["subtotal_cents"], payer_id=row["payer_id"],
             uploader_id=row["uploader_id"], note=row["note"], photo_sha256=row["photo_sha256"],
@@ -285,13 +364,13 @@ class Ledger:
             raise LedgerValidationError("month must use YYYY-MM")
         balances = {row["member_id"]: 0 for row in self.connection.execute("SELECT member_id FROM members ORDER BY member_id")}
         paid_rows = self.connection.execute(
-            "SELECT payer_id AS member_id, COALESCE(SUM(total_cents), 0) AS amount_cents FROM receipts WHERE substr(receipt_date, 1, 7) = ? GROUP BY payer_id",
+            "SELECT payer_id AS member_id, COALESCE(SUM(total_cents), 0) AS amount_cents FROM receipts WHERE status = 'confirmed' AND substr(receipt_date, 1, 7) = ? GROUP BY payer_id",
             (month,),
         ).fetchall()
         for row in paid_rows:
             balances[row["member_id"]] += row["amount_cents"]
         share_rows = self.connection.execute(
-            "SELECT s.member_id, COALESCE(SUM(s.amount_cents), 0) AS amount_cents FROM receipt_shares s JOIN receipts r ON r.receipt_id = s.receipt_id WHERE substr(r.receipt_date, 1, 7) = ? GROUP BY s.member_id",
+            "SELECT s.member_id, COALESCE(SUM(s.amount_cents), 0) AS amount_cents FROM receipt_shares s JOIN receipts r ON r.receipt_id = s.receipt_id WHERE r.status = 'confirmed' AND substr(r.receipt_date, 1, 7) = ? GROUP BY s.member_id",
             (month,),
         ).fetchall()
         for row in share_rows:

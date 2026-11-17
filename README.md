@@ -35,7 +35,7 @@ Clarification reasons are written in concise English by default, even when the r
 
 ## SQLite ledger
 
-Initialize a local ledger with its fixed member group, then confirm a reviewed `draft.json`. Confirmation recalculates shares, rejects unresolved clarifications, writes the expense and all shares in one SQLite transaction, and makes identical submission-ID retries idempotent.
+Initialize a local ledger with its fixed member group, then save a reviewed `draft.json`. A complete draft is stored as `confirmed` with recalculated shares; a draft with unresolved clarifications is retained as `pending` with its full source snapshot but no share rows. Pending receipts are excluded from monthly balances and transfer suggestions. Identical submission-ID retries remain idempotent.
 
 ```bash
 receipt-split-ledger init --database ledger.sqlite --members CindyTest,AmyTest,BenTest

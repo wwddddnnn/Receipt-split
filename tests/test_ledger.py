@@ -110,13 +110,27 @@ def test_same_submission_with_different_content_conflicts(ledger: Ledger):
         )
 
 
-def test_unresolved_or_unknown_member_receipt_is_not_written(ledger: Ledger):
+def test_unresolved_receipt_is_saved_pending_without_shares(ledger: Ledger):
     unresolved = _case_two_draft()
     unresolved.needs_clarification = [Clarification(field="receipt_date", reason="Date is unclear.")]
-    with pytest.raises(LedgerValidationError, match="resolve"):
-        ledger.confirm_receipt(
-            unresolved, note="AmyTest tea", submission_id="unresolved", provenance=_provenance(unresolved)
-        )
+    pending = ledger.confirm_receipt(
+        unresolved, note="AmyTest tea", submission_id="unresolved", provenance=_provenance(unresolved)
+    )
+    assert pending.status == "pending"
+    assert pending.shares == {}
+    row = ledger.connection.execute(
+        "SELECT status, confirmed_at FROM receipts WHERE receipt_id = ?", (pending.receipt_id,)
+    ).fetchone()
+    assert dict(row) == {"status": "pending", "confirmed_at": None}
+    assert ledger.connection.execute("SELECT COUNT(*) FROM receipt_shares").fetchone()[0] == 0
+    assert ledger.monthly_settlement("2026-02").balances_cents == {
+        "AmyTest": 0,
+        "BenTest": 0,
+        "CindyTest": 0,
+    }
+
+
+def test_unknown_member_receipt_is_not_written(ledger: Ledger):
     unknown = _case_two_draft()
     with pytest.raises(LedgerValidationError, match="not in the ledger"):
         ledger.confirm_receipt(
