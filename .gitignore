@@ -4,5 +4,5 @@ __pycache__/
 *.py[cod]
 .env
 .venv/
-artifacts/
+runs/
 *.egg-info/

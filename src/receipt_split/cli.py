@@ -29,21 +29,19 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=_json_default) + "\n")
 
 
-def _artifact_dir(root: Path) -> Path:
+def _run_dir(root: Path) -> Path:
     run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
     directory = root / run_id
     directory.mkdir(parents=True, exist_ok=False)
     return directory
 
 
-def _publish_latest(root: Path, artifacts: Path) -> None:
-    """Point `artifacts/latest` at the newest run without deleting run history."""
-    latest = root / "latest"
-    if latest.exists() and not latest.is_symlink():
-        return
-    if latest.is_symlink():
-        latest.unlink()
-    latest.symlink_to(artifacts.name, target_is_directory=True)
+def _output_dir(runs_dir: Path, requested_dir: Path | None) -> Path:
+    """Create one immutable output directory for a CLI run."""
+    if requested_dir is None:
+        return _run_dir(runs_dir)
+    requested_dir.mkdir(parents=True, exist_ok=False)
+    return requested_dir
 
 
 def _evaluate(actual: Any, expected: Any, path: str = "") -> list[dict[str, Any]]:
@@ -98,14 +96,24 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--uploader", required=True, help="uploader/member ID used for 'I/me'")
     parser.add_argument("--members", required=True, type=_parse_members, help="comma-separated member IDs")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"vision model (default: {DEFAULT_MODEL})")
-    parser.add_argument("--artifacts-dir", type=Path, default=Path("artifacts"), help="directory for each run")
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=Path("runs"),
+        help="parent directory for timestamped standalone runs",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="exact empty output directory (used by pytest live-case evaluations)",
+    )
     parser.add_argument("--expected", type=Path, help="optional expected draft JSON used only for evaluation")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    artifacts = _artifact_dir(args.artifacts_dir)
+    artifacts = _output_dir(args.runs_dir, args.output_dir)
     metadata = {
         "started_at": datetime.now(UTC).isoformat(),
         "photo": str(args.photo),
@@ -124,7 +132,6 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:
         elapsed_ms = round((time.perf_counter() - started) * 1000)
         _write_json(artifacts / "error.json", {"error_type": type(error).__name__, "message": str(error), "elapsed_ms": elapsed_ms})
-        _publish_latest(args.artifacts_dir, artifacts)
         print(f"Extraction failed; diagnostic artifact: {artifacts.resolve()}", file=sys.stderr)
         return 1
 
@@ -133,7 +140,6 @@ def main(argv: list[str] | None = None) -> int:
     _write_json(artifacts / "draft.json", draft.model_dump(mode="json"))
     _write_json(artifacts / "timing.json", {"elapsed_ms": elapsed_ms, "model": args.model, "prompt_version": PROMPT_VERSION})
     print(json.dumps(draft.model_dump(mode="json"), ensure_ascii=False, indent=2))
-    _publish_latest(args.artifacts_dir, artifacts)
     print(f"Artifacts: {artifacts.resolve()}", file=sys.stderr)
 
     if args.expected:

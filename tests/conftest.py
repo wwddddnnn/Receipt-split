@@ -26,11 +26,10 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config._model_eval_artifacts: list[dict[str, str]] = []  # type: ignore[attr-defined]
     config._pytest_reports: list[dict[str, str]] = []  # type: ignore[attr-defined]
-    if config.getoption("--run-model-evals"):
-        run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
-        root = Path.cwd() / "artifacts" / "pytest" / run_id
-        root.mkdir(parents=True, exist_ok=False)
-        config._model_eval_root = root  # type: ignore[attr-defined]
+    run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+    root = Path.cwd() / "runs" / run_id
+    root.mkdir(parents=True, exist_ok=False)
+    config._pytest_run_root = root  # type: ignore[attr-defined]
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -53,9 +52,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    root: Path | None = getattr(session.config, "_model_eval_root", None)
-    if root is None:
-        return
+    root: Path = session.config._pytest_run_root  # type: ignore[attr-defined]
     summary = {
         "finished_at": datetime.now(UTC).isoformat(),
         "exit_status": exitstatus,

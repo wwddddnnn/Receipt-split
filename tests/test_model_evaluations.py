@@ -19,7 +19,7 @@ CASES = json.loads((EXAMPLES_ROOT / "cases.json").read_text())
 @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
 def test_model_evaluation_case(case: dict[str, object], pytestconfig: pytest.Config) -> None:
     """Run one selected fixture and retain exactly that fixture's API artifacts."""
-    root: Path = pytestconfig._model_eval_root  # type: ignore[attr-defined]
+    root: Path = pytestconfig._pytest_run_root  # type: ignore[attr-defined]
     case_root = root / "cases" / str(case["id"])
     status = main(
         [
@@ -32,17 +32,11 @@ def test_model_evaluation_case(case: dict[str, object], pytestconfig: pytest.Con
             ",".join(case["members"]),  # type: ignore[arg-type]
             "--expected",
             str(EXAMPLES_ROOT / str(case["expected"])),
-            "--artifacts-dir",
+            "--output-dir",
             str(case_root),
         ]
     )
-    run_directories = sorted(
-        directory
-        for directory in case_root.iterdir()
-        if directory.is_dir() and not directory.is_symlink()
-    )
-    assert len(run_directories) == 1
     pytestconfig._model_eval_artifacts.append(  # type: ignore[attr-defined]
-        {"case_id": str(case["id"]), "artifact_dir": str(run_directories[0])}
+        {"case_id": str(case["id"]), "artifact_dir": f"cases/{case['id']}"}
     )
     assert status == 0

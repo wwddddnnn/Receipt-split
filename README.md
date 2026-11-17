@@ -21,9 +21,7 @@ conda run -n receipt-split receipt-split examples/receipts/case-01-full-split.pn
   --expected examples/expected-case-01.json
 ```
 
-The default model is `gpt-6-astra`; override it with `--model` when desired. Each invocation writes `run.json`, `raw_response.json`, `draft.json`, `timing.json`, and (when requested) `evaluation.json` under `artifacts/<UTC timestamp>-<id>/`. A failed request retains `run.json` and `error.json` instead. Expected answers are never sent to the model.
-
-`artifacts/latest` always points to the newest run, so inspect the latest parsed response with `conda run -n receipt-split python -m json.tool artifacts/latest/draft.json`; use `raw_response.json` for the complete API response and `evaluation.json` when an expected answer was supplied.
+The default model is `gpt-6-astra`; override it with `--model` when desired. Each standalone invocation writes `run.json`, `raw_response.json`, `draft.json`, `timing.json`, and (when requested) `evaluation.json` under `runs/<UTC timestamp>-<id>/`. A failed request retains `run.json` and `error.json` instead. Expected answers are never sent to the model.
 
 Evaluation checks whether each clarification identifies the expected field, but its natural-language `reason` is retained for review rather than scored verbatim.
 
@@ -57,7 +55,7 @@ To run only case 4, use pytest's selector:
 conda run -n receipt-split pytest --run-model-evals -k 04-individual-menu-items
 ```
 
-Every live pytest invocation creates `artifacts/pytest/<run-id>/pytest-summary.json`. Only the selected cases appear below its `cases/` directory; each case keeps its own `draft.json`, `raw_response.json`, `evaluation.json`, `run.json`, and `timing.json`. For example, the case-4 command writes exactly one case's actual output.
+Every pytest invocation creates `runs/<run-id>/pytest-summary.json`, whether it is offline or live. A live run additionally writes actual outputs beneath `runs/<run-id>/cases/<case-id>/`; only selected cases appear there. For example, the case-4 command writes exactly one case's actual output. There is no `latest` alias; the timestamped directory is the run index.
 
 ## Synthetic phase-one fixtures
 
