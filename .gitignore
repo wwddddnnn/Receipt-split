@@ -8,3 +8,5 @@ runs/
 *.egg-info/
 *.sqlite
 *.sqlite-*
+data/*
+!data/.gitkeep

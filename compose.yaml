@@ -1,0 +1,22 @@
+services:
+  receipt-split:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      RECEIPT_SPLIT_DATA_DIR: /data
+      RECEIPT_SPLIT_DB_PATH: /data/ledger.sqlite
+    ports:
+      # Keep the first deployment local-only. Change RECEIPT_SPLIT_BIND_HOST to
+      # 0.0.0.0 only behind HTTPS and authentication.
+      - "${RECEIPT_SPLIT_BIND_HOST:-127.0.0.1}:${RECEIPT_SPLIT_PORT:-8080}:8080"
+    volumes:
+      # A relative bind mount works with Docker Desktop on Windows and keeps the
+      # database and future receipt-image objects outside the container image.
+      - type: bind
+        source: ./data
+        target: /data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true

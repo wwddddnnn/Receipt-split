@@ -13,6 +13,35 @@ cp .env.example .env
 
 Add the key locally to `.env` as `OPENAI_API_KEY=...`. The extractor loads that file at runtime; `.env` is ignored by Git, while `.env.example` is the safe template. A system `OPENAI_API_KEY`, if set, takes precedence.
 
+## Docker foundation
+
+The repository includes a Docker Compose setup for the forthcoming phone-friendly
+web interface. It runs a minimal health-check API today; receipt upload, review,
+and authentication endpoints will be added separately. Persistent application
+data is kept outside the image in `./data/`:
+
+```text
+data/
+  ledger.sqlite          # created once the ledger is initialized
+  objects/               # future original receipt-image objects
+```
+
+Neither the database, images, nor `.env` are committed to Git. Build and start
+the local-only service with Docker Desktop:
+
+```bash
+docker compose up --build -d
+curl http://127.0.0.1:8080/healthz
+docker compose logs -f
+```
+
+The service defaults to `127.0.0.1:8080`, so it is not reachable from phones or
+the public internet. Do not change `RECEIPT_SPLIT_BIND_HOST` to `0.0.0.0` until
+the web app has login, receipt-level authorization, and HTTPS via a reverse
+proxy. When those are implemented, image files will live under `data/objects/`
+while SQLite stores their relative storage keys, hashes, MIME types, order, and
+receipt relationship.
+
 ## Run a real API extraction
 
 ```bash
