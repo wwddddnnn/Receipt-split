@@ -2,18 +2,18 @@
   "receipt_date": null,
   "total_cents": 11327,
   "subtotal_cents": 8394,
-  "payer_id": "Doris",
+  "payer_id": "CindyTest",
   "individual_charges": [
     {
-      "member_id": "Amy",
+      "member_id": "AmyTest",
       "amount_cents": 1249
     },
     {
-      "member_id": "Ben",
+      "member_id": "BenTest",
       "amount_cents": 1149
     },
     {
-      "member_id": "Doris",
+      "member_id": "CindyTest",
       "amount_cents": 5996
     }
   ],

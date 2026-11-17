@@ -2,8 +2,8 @@
   "receipt_date": "2026-02-16",
   "total_cents": 5650,
   "subtotal_cents": 5000,
-  "payer_id": "Doris",
+  "payer_id": "CindyTest",
   "individual_charges": [],
-  "remainder_member_ids": ["Amy", "Ben"],
+  "remainder_member_ids": ["AmyTest", "BenTest"],
   "needs_clarification": []
 }

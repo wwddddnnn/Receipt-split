@@ -10,10 +10,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_expected_answer_can_be_partial_for_targeted_evaluation():
-    actual = {"total_cents": 5650, "payer_id": "Doris"}
+    actual = {"total_cents": 5650, "payer_id": "CindyTest"}
     assert _evaluate(actual, {"total_cents": 5650}) == []
-    assert _evaluate(actual, {"payer_id": "Ben"}) == [
-        {"field": "payer_id", "expected": "Ben", "actual": "Doris"}
+    assert _evaluate(actual, {"payer_id": "BenTest"}) == [
+        {"field": "payer_id", "expected": "BenTest", "actual": "CindyTest"}
     ]
 
 
@@ -26,19 +26,19 @@ def test_missing_key_is_reported():
 def test_assignment_lists_are_evaluated_without_regard_to_order():
     actual = {
         "individual_charges": [
-            {"member_id": "Doris", "amount_cents": 5_996},
-            {"member_id": "Amy", "amount_cents": 1_249},
-            {"member_id": "Ben", "amount_cents": 1_149},
+            {"member_id": "CindyTest", "amount_cents": 5_996},
+            {"member_id": "AmyTest", "amount_cents": 1_249},
+            {"member_id": "BenTest", "amount_cents": 1_149},
         ],
-        "remainder_member_ids": ["Doris", "Amy", "Ben"],
+        "remainder_member_ids": ["CindyTest", "AmyTest", "BenTest"],
     }
     expected = {
         "individual_charges": [
-            {"member_id": "Amy", "amount_cents": 1_249},
-            {"member_id": "Ben", "amount_cents": 1_149},
-            {"member_id": "Doris", "amount_cents": 5_996},
+            {"member_id": "AmyTest", "amount_cents": 1_249},
+            {"member_id": "BenTest", "amount_cents": 1_149},
+            {"member_id": "CindyTest", "amount_cents": 5_996},
         ],
-        "remainder_member_ids": ["Amy", "Ben", "Doris"],
+        "remainder_member_ids": ["AmyTest", "BenTest", "CindyTest"],
     }
 
     assert _evaluate(actual, expected) == []
@@ -72,8 +72,8 @@ def test_clarification_reason_text_does_not_affect_evaluation():
 def test_invalid_photo_creates_diagnostic_artifact(tmp_path: Path):
     artifact_root = tmp_path / "artifacts"
     status = main([
-        str(tmp_path / "missing.jpg"), "--note", "split equally", "--uploader", "Doris",
-        "--members", "Doris,Amy,Ben", "--runs-dir", str(artifact_root),
+        str(tmp_path / "missing.jpg"), "--note", "split equally", "--uploader", "CindyTest",
+        "--members", "CindyTest,AmyTest,BenTest", "--runs-dir", str(artifact_root),
     ])
     assert status == 1
     errors = list(artifact_root.glob("*/error.json"))
@@ -98,11 +98,11 @@ def test_case_four_expected_draft_matches_the_menu_assignment():
     assert draft.total_cents == 11_327
     assert draft.subtotal_cents == 8_394
     assert [(charge.member_id, charge.amount_cents) for charge in draft.individual_charges] == [
-        ("Amy", 1_249),
-        ("Ben", 1_149),
-        ("Doris", 5_996),
+        ("AmyTest", 1_249),
+        ("BenTest", 1_149),
+        ("CindyTest", 5_996),
     ]
     assert draft.remainder_member_ids == []
-    assert calculate_shares(draft) == {"Amy": 1_685, "Ben": 1_551, "Doris": 8_091}
+    assert calculate_shares(draft) == {"AmyTest": 1_685, "BenTest": 1_551, "CindyTest": 8_091}
 
 

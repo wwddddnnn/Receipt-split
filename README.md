@@ -16,8 +16,8 @@ export OPENAI_API_KEY='your-key-here'
 ```bash
 conda run -n receipt-split receipt-split examples/receipts/case-01-full-split.png \
   --note '我垫付，我们三个平摊。' \
-  --uploader Doris \
-  --members Doris,Amy,Ben \
+  --uploader CindyTest \
+  --members CindyTest,AmyTest,BenTest \
   --expected examples/expected-case-01.json
 ```
 
@@ -36,10 +36,10 @@ Clarification reasons are written in concise English by default, even when the r
 Initialize a local ledger with its fixed member group, then confirm a reviewed `draft.json`. Confirmation recalculates shares, rejects unresolved clarifications, writes the expense and all shares in one SQLite transaction, and makes identical submission-ID retries idempotent.
 
 ```bash
-receipt-split-ledger init --database ledger.sqlite --members Doris,Amy,Ben
+receipt-split-ledger init --database ledger.sqlite --members CindyTest,AmyTest,BenTest
 receipt-split-ledger confirm path/to/draft.json \
-  --database ledger.sqlite --note 'Amy tea' --submission-id 'unique-client-id' \
-  --uploader Doris --photo path/to/receipt.png --raw-response path/to/raw_response.json \
+  --database ledger.sqlite --note 'AmyTest tea' --submission-id 'unique-client-id' \
+  --uploader CindyTest --photo path/to/receipt.png --raw-response path/to/raw_response.json \
   --model gpt-6-astra --prompt-version 2026-11-16.phase1-fee-proration
 receipt-split-ledger monthly 2026-02 --database ledger.sqlite
 ```
@@ -51,7 +51,7 @@ The database has `members`, `receipts`, and `receipt_shares` tables. `receipts` 
 ```bash
 conda run -n receipt-split pytest
 conda run -n receipt-split receipt-split does-not-exist.jpg \
-  --note '我垫付，我们三个平摊。' --uploader Doris --members Doris,Amy,Ben
+  --note '我垫付，我们三个平摊。' --uploader CindyTest --members CindyTest,AmyTest,BenTest
 ```
 
 The second command verifies failure-audit creation and intentionally exits with status `1`.
@@ -76,7 +76,7 @@ Every pytest invocation creates `runs/<run-id>/pytest-summary.json`, whether it 
 
 `examples/receipts/` holds fictional or user-supplied receipts for the configured cases; no real payment credentials are included. `examples/cases.json` ties each image to its note, member set, and standard answer. Standard answers are supplied to the CLI only after model extraction, so they are used for scoring and never sent to the API.
 
-Expected case 02 encodes the **extraction rule** (`Amy: 1200`, then all three share the remainder), rather than the derived final shares. Case 03 asserts `5650`, the paid total, rather than the `$50.00` subtotal.
+Expected case 02 encodes the **extraction rule** (`AmyTest: 1200`, then all three share the remainder), rather than the derived final shares. Case 03 asserts `5650`, the paid total, rather than the `$50.00` subtotal.
 
 ## API behavior
 

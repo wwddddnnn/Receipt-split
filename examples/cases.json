@@ -3,32 +3,32 @@
     "id": "01-full-split",
     "photo": "receipts/case-01-full-split.png",
     "note": "我垫付，我们三个平摊。",
-    "uploader_id": "Doris",
-    "members": ["Doris", "Amy", "Ben"],
+    "uploader_id": "CindyTest",
+    "members": ["CindyTest", "AmyTest", "BenTest"],
     "expected": "expected-case-01.json"
   },
   {
     "id": "02-individual-charge",
     "photo": "receipts/case-02-individual-charge.png",
-    "note": "我垫付，$12 奶茶算 Amy 的，剩下我们三个平摊。",
-    "uploader_id": "Doris",
-    "members": ["Doris", "Amy", "Ben"],
+    "note": "我垫付，$12 奶茶算 AmyTest 的，剩下我们三个平摊。",
+    "uploader_id": "CindyTest",
+    "members": ["CindyTest", "AmyTest", "BenTest"],
     "expected": "expected-case-02.json"
   },
   {
     "id": "03-paid-total",
     "photo": "receipts/case-03-paid-total.png",
-    "note": "我垫付，Amy 和 Ben 平摊。",
-    "uploader_id": "Doris",
-    "members": ["Doris", "Amy", "Ben"],
+    "note": "我垫付，AmyTest 和 BenTest 平摊。",
+    "uploader_id": "CindyTest",
+    "members": ["CindyTest", "AmyTest", "BenTest"],
     "expected": "expected-case-03.json"
   },
   {
     "id": "04-individual-menu-items",
     "photo": "receipts/case-04-individual-charge.PNG",
-    "note": "Doris 垫付，Amy 点了烤黑糖波波牛乳茶，Ben 点了清爽芭乐提，其他都是 Doris 的。",
-    "uploader_id": "Doris",
-    "members": ["Doris", "Amy", "Ben"],
+    "note": "CindyTest 垫付，AmyTest 点了烤黑糖波波牛乳茶，BenTest 点了清爽芭乐提，其他都是 CindyTest 的。",
+    "uploader_id": "CindyTest",
+    "members": ["CindyTest", "AmyTest", "BenTest"],
     "expected": "expected-case-04.json"
   }
 ]

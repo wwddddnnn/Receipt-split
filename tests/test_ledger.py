@@ -21,9 +21,9 @@ def _case_two_draft() -> ExpenseDraft:
         receipt_date="2026-02-15",
         total_cents=6_000,
         subtotal_cents=5_310,
-        payer_id="Doris",
-        individual_charges=[IndividualCharge(member_id="Amy", amount_cents=1_200)],
-        remainder_member_ids=["Doris", "Amy", "Ben"],
+        payer_id="CindyTest",
+        individual_charges=[IndividualCharge(member_id="AmyTest", amount_cents=1_200)],
+        remainder_member_ids=["CindyTest", "AmyTest", "BenTest"],
     )
 
 
@@ -32,12 +32,12 @@ def _third_party_draft() -> ExpenseDraft:
         receipt_date="2026-02-16",
         total_cents=1_800,
         subtotal_cents=1_800,
-        payer_id="Ben",
-        remainder_member_ids=["Doris", "Amy"],
+        payer_id="BenTest",
+        remainder_member_ids=["CindyTest", "AmyTest"],
     )
 
 
-def _provenance(draft: ExpenseDraft, *, uploader_id: str = "Doris") -> ReceiptProvenance:
+def _provenance(draft: ExpenseDraft, *, uploader_id: str = "CindyTest") -> ReceiptProvenance:
     return ReceiptProvenance(
         uploader_id=uploader_id,
         photo_bytes=PHOTO_BYTES,
@@ -53,21 +53,21 @@ def _provenance(draft: ExpenseDraft, *, uploader_id: str = "Doris") -> ReceiptPr
 @pytest.fixture
 def ledger(tmp_path: Path):
     with Ledger(tmp_path / "ledger.sqlite") as instance:
-        instance.seed_members(["Doris", "Amy", "Ben"])
+        instance.seed_members(["CindyTest", "AmyTest", "BenTest"])
         yield instance
 
 
 def test_confirm_persists_public_and_original_receipt_data(ledger: Ledger):
     draft = _case_two_draft()
     confirmed = ledger.confirm_receipt(
-        draft, note="Amy tea", submission_id="case-two", provenance=_provenance(draft)
+        draft, note="AmyTest tea", submission_id="case-two", provenance=_provenance(draft)
     )
 
     assert confirmed.created is True
-    assert confirmed.shares == {"Amy": 2_904, "Ben": 1_548, "Doris": 1_548}
+    assert confirmed.shares == {"AmyTest": 2_904, "BenTest": 1_548, "CindyTest": 1_548}
     assert confirmed.photo_sha256 == sha256(PHOTO_BYTES).hexdigest()
     row = ledger.connection.execute("SELECT * FROM receipts").fetchone()
-    assert row["uploader_id"] == "Doris"
+    assert row["uploader_id"] == "CindyTest"
     assert row["photo_bytes"] == PHOTO_BYTES
     assert row["photo_mime_type"] == "image/png"
     assert json.loads(row["raw_model_response_json"])["id"] == "response-test"
@@ -88,10 +88,10 @@ def test_confirm_persists_public_and_original_receipt_data(ledger: Ledger):
 def test_same_submission_and_content_is_idempotent(ledger: Ledger):
     draft = _case_two_draft()
     first = ledger.confirm_receipt(
-        draft, note="Amy tea", submission_id="retry", provenance=_provenance(draft)
+        draft, note="AmyTest tea", submission_id="retry", provenance=_provenance(draft)
     )
     retry = ledger.confirm_receipt(
-        draft, note="Amy tea", submission_id="retry", provenance=_provenance(draft)
+        draft, note="AmyTest tea", submission_id="retry", provenance=_provenance(draft)
     )
 
     assert first.receipt_id == retry.receipt_id
@@ -102,7 +102,7 @@ def test_same_submission_and_content_is_idempotent(ledger: Ledger):
 def test_same_submission_with_different_content_conflicts(ledger: Ledger):
     draft = _case_two_draft()
     ledger.confirm_receipt(
-        draft, note="Amy tea", submission_id="retry", provenance=_provenance(draft)
+        draft, note="AmyTest tea", submission_id="retry", provenance=_provenance(draft)
     )
     with pytest.raises(SubmissionConflictError, match="different content"):
         ledger.confirm_receipt(
@@ -115,12 +115,12 @@ def test_unresolved_or_unknown_member_receipt_is_not_written(ledger: Ledger):
     unresolved.needs_clarification = [Clarification(field="receipt_date", reason="Date is unclear.")]
     with pytest.raises(LedgerValidationError, match="resolve"):
         ledger.confirm_receipt(
-            unresolved, note="Amy tea", submission_id="unresolved", provenance=_provenance(unresolved)
+            unresolved, note="AmyTest tea", submission_id="unresolved", provenance=_provenance(unresolved)
         )
     unknown = _case_two_draft()
     with pytest.raises(LedgerValidationError, match="not in the ledger"):
         ledger.confirm_receipt(
-            unknown, note="Amy tea", submission_id="unknown", provenance=_provenance(unknown, uploader_id="Unknown")
+            unknown, note="AmyTest tea", submission_id="unknown", provenance=_provenance(unknown, uploader_id="Unknown")
         )
     assert ledger.connection.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 0
 
@@ -132,17 +132,17 @@ def test_monthly_balances_and_transfers_use_receipt_date(ledger: Ledger):
     )
     third_party = _third_party_draft()
     ledger.confirm_receipt(
-        third_party, note="February snack", submission_id="feb-two", provenance=_provenance(third_party, uploader_id="Ben")
+        third_party, note="February snack", submission_id="feb-two", provenance=_provenance(third_party, uploader_id="BenTest")
     )
     march = _third_party_draft()
     march.receipt_date = "2026-03-01"
     ledger.confirm_receipt(
-        march, note="March snack", submission_id="mar-one", provenance=_provenance(march, uploader_id="Ben")
+        march, note="March snack", submission_id="mar-one", provenance=_provenance(march, uploader_id="BenTest")
     )
 
     settlement = ledger.monthly_settlement("2026-02")
-    assert settlement.balances_cents == {"Amy": -3_804, "Ben": 252, "Doris": 3_552}
+    assert settlement.balances_cents == {"AmyTest": -3_804, "BenTest": 252, "CindyTest": 3_552}
     assert [transfer.model_dump() for transfer in settlement.transfers] == [
-        {"from_member_id": "Amy", "to_member_id": "Ben", "amount_cents": 252},
-        {"from_member_id": "Amy", "to_member_id": "Doris", "amount_cents": 3_552},
+        {"from_member_id": "AmyTest", "to_member_id": "BenTest", "amount_cents": 252},
+        {"from_member_id": "AmyTest", "to_member_id": "CindyTest", "amount_cents": 3_552},
     ]
