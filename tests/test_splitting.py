@@ -42,6 +42,16 @@ def test_unassigned_subtotal_is_evenly_shared_before_fee_proration():
     assert calculate_shares(draft) == {"AmyTest": 2_904, "BenTest": 1_548, "CindyTest": 1_548}
 
 
+def test_pure_equal_split_divides_paid_total_directly():
+    draft = ExpenseDraft(
+        total_cents=24_078,
+        subtotal_cents=21_145,
+        remainder_member_ids=["AmyTest", "BenTest"],
+    )
+
+    assert calculate_shares(draft) == {"AmyTest": 12_039, "BenTest": 12_039}
+
+
 def test_missing_subtotal_is_not_calculated():
     with pytest.raises(ValueError, match="subtotal_cents"):
         calculate_shares(ExpenseDraft(total_cents=100, remainder_member_ids=["AmyTest"]))

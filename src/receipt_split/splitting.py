@@ -58,6 +58,12 @@ def calculate_shares(draft: ExpenseDraft) -> dict[str, int]:
     if draft.subtotal_cents > draft.total_cents:
         raise ValueError("subtotal_cents cannot exceed total_cents")
 
+    # A receipt with no individually assigned item is a true equal split. Split
+    # the paid total directly so subtotal rounding cannot be amplified when fees
+    # are later prorated.
+    if not draft.individual_charges and draft.remainder_member_ids:
+        return dict(sorted(_split_evenly(draft.total_cents, draft.remainder_member_ids).items()))
+
     bases: dict[str, int] = defaultdict(int)
     for charge in draft.individual_charges:
         bases[charge.member_id] += charge.amount_cents
