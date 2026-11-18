@@ -13,7 +13,7 @@ from openai import OpenAI
 
 from .models import ExpenseDraft
 
-PROMPT_VERSION = "2026-11-16.phase1-fee-proration"
+PROMPT_VERSION = "2026-11-17.toronto-date-order"
 DEFAULT_MODEL = "gpt-6-astra"
 
 SYSTEM_PROMPT = """You extract an editable expense-splitting draft from a receipt image and note.
@@ -24,6 +24,9 @@ member list. If a required fact is unreadable, missing, contradictory, or a pers
 matched, set that field to null or an empty list as appropriate and add a specific clarification.
 Write every needs_clarification.reason in concise English, regardless of the receipt or note
 language.
+This group is in Toronto, Canada. When a receipt uses all-numeric year/month/day
+notation such as 26/10/14, interpret it as 2026-10-14, not 2014-10-26. If the
+numeric date order is genuinely ambiguous, add a clarification rather than guessing.
 Use the paid/grand-total amount for total_cents and separately extract subtotal_cents: the sum
 of items/services before tax, tip, service, delivery, and other fees. When the note gives a
 split rule, represent direct pre-fee item allocations in individual_charges; include every
