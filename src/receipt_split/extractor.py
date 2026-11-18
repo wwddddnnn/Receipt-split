@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -40,7 +41,34 @@ def _image_data_url(photo: Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def build_input(photo: Path, note: str, uploader_id: str, members: list[str]) -> list[dict[str, Any]]:
+def _serializable_response(response: Any) -> Any:
+    """Convert SDK response objects before they enter the durable ledger."""
+    if hasattr(response, "to_json"):
+        return json.loads(response.to_json())
+    if hasattr(response, "model_dump"):
+        return response.model_dump(mode="json")
+    return response
+
+
+def _photo_paths(photos: str | Path | Sequence[str | Path]) -> list[Path]:
+    if isinstance(photos, (str, Path)):
+        paths = [Path(photos)]
+    else:
+        paths = [Path(photo) for photo in photos]
+    if not paths:
+        raise ValueError("provide at least one receipt image")
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"receipt image was not found: {path}")
+    return paths
+
+
+def build_input(
+    photos: str | Path | Sequence[str | Path],
+    note: str,
+    uploader_id: str,
+    members: list[str],
+) -> list[dict[str, Any]]:
     """Build the reusable Responses API input without contacting the network."""
     if not note.strip():
         raise ValueError("note must not be empty")
@@ -51,12 +79,18 @@ def build_input(photo: Path, note: str, uploader_id: str, members: list[str]) ->
     if uploader_id not in members:
         raise ValueError("uploader_id must be included in members")
 
+    photo_paths = _photo_paths(photos)
     context = (
         f"Uploader ID: {uploader_id}\n"
         f"Allowed member IDs: {', '.join(members)}\n"
         f"Note: {note}\n"
-        "Extract the expense draft from this receipt image."
+        f"The {len(photo_paths)} receipt image(s) are ordered consecutive pages of one receipt. "
+        "Extract one expense draft from all of them."
     )
+    image_content = [
+        {"type": "input_image", "image_url": _image_data_url(photo), "detail": "original"}
+        for photo in photo_paths
+    ]
     return [
         {
             "role": "system",
@@ -66,14 +100,14 @@ def build_input(photo: Path, note: str, uploader_id: str, members: list[str]) ->
             "role": "user",
             "content": [
                 {"type": "input_text", "text": context},
-                {"type": "input_image", "image_url": _image_data_url(photo), "detail": "original"},
+                *image_content,
             ],
         },
     ]
 
 
 def extract_expense(
-    photo: str | Path,
+    photos: str | Path | Sequence[str | Path],
     note: str,
     uploader_id: str,
     members: list[str],
@@ -81,17 +115,15 @@ def extract_expense(
     model: str = DEFAULT_MODEL,
 ) -> tuple[ExpenseDraft, Any]:
     """Call the cloud vision model and return the draft plus serializable raw response."""
-    photo_path = Path(photo)
-    if not photo_path.is_file():
-        raise FileNotFoundError(f"receipt image was not found: {photo_path}")
+    photo_paths = _photo_paths(photos)
 
     load_dotenv(Path.cwd() / ".env", override=False)
     client = OpenAI()
     response = client.responses.parse(
         model=model,
-        input=build_input(photo_path, note, uploader_id, members),
+        input=build_input(photo_paths, note, uploader_id, members),
         text_format=ExpenseDraft,
     )
     if response.output_parsed is None:
         raise RuntimeError("model returned no parseable ExpenseDraft")
-    return response.output_parsed, response
+    return response.output_parsed, _serializable_response(response)

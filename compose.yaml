@@ -7,6 +7,7 @@ services:
     environment:
       RECEIPT_SPLIT_DATA_DIR: /data
       RECEIPT_SPLIT_DB_PATH: /data/ledger.sqlite
+      RECEIPT_SPLIT_MEMBERS: "${RECEIPT_SPLIT_MEMBERS:-AmyTest,BenTest,CindyTest,DanTest}"
     ports:
       # Keep the first deployment local-only. Change RECEIPT_SPLIT_BIND_HOST to
       # 0.0.0.0 only behind HTTPS and authentication.

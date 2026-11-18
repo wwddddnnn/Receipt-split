@@ -15,10 +15,11 @@ Add the key locally to `.env` as `OPENAI_API_KEY=...`. The extractor loads that 
 
 ## Docker foundation
 
-The repository includes a Docker Compose setup for the forthcoming phone-friendly
-web interface. It runs a minimal health-check API today; receipt upload, review,
-and authentication endpoints will be added separately. Persistent application
-data is kept outside the image in `./data/`:
+The repository includes a Docker Compose setup for the first phone-friendly web
+API. It accepts multiple receipt images, an original note, and an uploader ID;
+it extracts, validates, calculates, and immediately saves a confirmed receipt.
+This trusted-group MVP has no login or draft-review screen. Persistent
+application data is kept outside the image in `./data/`:
 
 ```text
 data/
@@ -38,9 +39,18 @@ docker compose logs -f
 The service defaults to `127.0.0.1:8080`, so it is not reachable from phones or
 the public internet. Do not change `RECEIPT_SPLIT_BIND_HOST` to `0.0.0.0` until
 the web app has login, receipt-level authorization, and HTTPS via a reverse
-proxy. When those are implemented, image files will live under `data/objects/`
-while SQLite stores their relative storage keys, hashes, MIME types, order, and
-receipt relationship.
+proxy. The API seeds `AmyTest`, `BenTest`, `CindyTest`, and `DanTest` by default;
+override them with `RECEIPT_SPLIT_MEMBERS`. Image files live under
+`data/objects/`, while SQLite stores their ordered relative paths.
+
+The local API reference is at `http://127.0.0.1:8080/docs`. Its first endpoints
+are `GET /members`, `POST /receipts`, `GET /receipts/{receipt_id}`, photo URLs,
+and `GET /settlements/{month}`. `POST /receipts` uses `multipart/form-data` with
+`uploader_id`, `note`, and one or more `photos` fields. It accepts PNG/JPEG files
+up to 10 MB each, at most 10 images, and sends them to the model in upload order.
+An optional `Idempotency-Key` request header must be a UUID; otherwise the API
+generates one and returns it in the response. Extraction, validation, and storage
+errors return structured JSON without terminating the API process.
 
 ## Run a real API extraction
 
