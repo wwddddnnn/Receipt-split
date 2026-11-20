@@ -22,6 +22,7 @@ dev = ["httpx>=0.27.0", "pytest>=8.0.0"]
 [project.scripts]
 receipt-split = "receipt_split.cli:main"
 receipt-split-ledger = "receipt_split.ledger_cli:main"
+receipt-split-admin = "receipt_split.admin_cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -10,14 +10,16 @@ from tempfile import TemporaryDirectory
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, File, Form, Header, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .extractor import DEFAULT_MODEL, PROMPT_VERSION, extract_expense
+from .auth import AuthStore, MemberIdentity
 from .ledger import (
     ConfirmedReceipt,
     Ledger,
@@ -45,7 +47,16 @@ class ApiProblem(Exception):
 
 
 class MembersResponse(BaseModel):
-    members: list[str]
+    members: list[MemberIdentity]
+
+
+class LoginRequest(BaseModel):
+    member_id: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    member: MemberIdentity
 
 
 class ReceiptResponse(BaseModel):
@@ -58,6 +69,9 @@ class ReceiptResponse(BaseModel):
     payer_id: str | None
     uploader_id: str
     note: str
+    created_by: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
     photo_urls: list[str]
     shares: dict[str, int]
     created: bool
@@ -66,7 +80,9 @@ class ReceiptResponse(BaseModel):
 class SettlementResponse(BaseModel):
     month: str
     strategy: Literal["group_netting", "receipt_links"]
-    balances_cents: dict[str, int]
+    my_member_id: str
+    my_display_name: str
+    my_balance_cents: int
     transfers: list[dict[str, Any]]
 
 
@@ -84,6 +100,11 @@ def _data_dir() -> Path:
 
 def _database_path() -> Path:
     return Path(os.environ.get("RECEIPT_SPLIT_DB_PATH", _data_dir() / "ledger.sqlite"))
+
+
+def _static_dir() -> Path:
+    """Return the optional compiled single-page application directory."""
+    return Path(os.environ.get("RECEIPT_SPLIT_STATIC_DIR", "static"))
 
 
 def _photo_mime_type(image_bytes: bytes) -> str:
@@ -108,8 +129,14 @@ def _submission_id(idempotency_key: str | None) -> str:
 
 
 def _receipt_response(receipt: ConfirmedReceipt) -> ReceiptResponse:
+    with AuthStore(_database_path()) as store:
+        row = store.connection.execute(
+            "SELECT created_by, updated_by, updated_at FROM receipts WHERE receipt_id = ?",
+            (receipt.receipt_id,),
+        ).fetchone()
     return ReceiptResponse(
         **receipt.model_dump(exclude={"photo_paths"}),
+        **dict(row),
         photo_urls=[f"/receipts/{receipt.receipt_id}/photos/{index}" for index in range(len(receipt.photo_paths))],
     )
 
@@ -122,6 +149,14 @@ def _open_ledger() -> Ledger:
         raise ApiProblem(503, "storage_unavailable", "Receipt storage is temporarily unavailable.") from error
 
 
+def _current_member(request: Request) -> MemberIdentity:
+    with AuthStore(_database_path()) as store:
+        member = store.session_member(request.cookies.get("receipt_split_session"))
+    if member is None:
+        raise ApiProblem(401, "authentication_required", "请先登录。")
+    return member
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     data_dir = _data_dir()
@@ -130,6 +165,8 @@ async def _lifespan(app: FastAPI):
     try:
         with Ledger(_database_path()) as ledger:
             ledger.seed_members(list(members))
+        with AuthStore(_database_path()) as store:
+            store.seed_members(list(members))
     except Exception:
         LOGGER.exception("Could not initialize receipt ledger")
         raise
@@ -176,21 +213,58 @@ def create_app() -> FastAPI:
     def healthcheck() -> dict[str, str]:
         return {"status": "ok" if _data_dir().is_dir() else "storage_unavailable"}
 
+    @app.post("/auth/login", response_model=LoginResponse, tags=["auth"])
+    def login(credentials: LoginRequest, response: Response) -> LoginResponse:
+        with AuthStore(_database_path()) as store:
+            member = store.authenticate(credentials.member_id, credentials.password)
+            if member is None:
+                raise ApiProblem(401, "invalid_credentials", "账号或密码错误")
+            token = store.create_session(member.member_id)
+        response.set_cookie(
+            "receipt_split_session", token, max_age=14 * 24 * 60 * 60,
+            httponly=True, secure=os.environ.get("RECEIPT_SPLIT_COOKIE_SECURE", "false").lower() == "true",
+            samesite="lax", path="/",
+        )
+        return LoginResponse(member=member)
+
+    @app.post("/auth/logout", status_code=204, tags=["auth"])
+    def logout(request: Request, response: Response) -> Response:
+        with AuthStore(_database_path()) as store:
+            store.revoke_session(request.cookies.get("receipt_split_session"))
+        response.delete_cookie("receipt_split_session", path="/")
+        return response
+
+    @app.get("/auth/me", response_model=LoginResponse, tags=["auth"])
+    def current_identity(request: Request) -> LoginResponse:
+        return LoginResponse(member=_current_member(request))
+
     @app.get("/members", response_model=MembersResponse, tags=["members"])
     def list_members(request: Request) -> MembersResponse:
-        return MembersResponse(members=list(request.app.state.members))
+        _current_member(request)
+        with AuthStore(_database_path()) as store:
+            return MembersResponse(members=store.members())
+
+    @app.get("/receipts", response_model=list[ReceiptResponse], tags=["receipts"])
+    def list_receipts(request: Request) -> list[ReceiptResponse]:
+        member = _current_member(request)
+        with AuthStore(_database_path()) as store:
+            receipt_ids = store.accessible_receipt_ids(member.member_id)
+        with _open_ledger() as ledger:
+            return [_receipt_response(ledger._get_receipt(receipt_id, created=False)) for receipt_id in receipt_ids]
 
     @app.post("/receipts", response_model=ReceiptResponse, tags=["receipts"])
     async def create_receipt(
         request: Request,
-        uploader_id: str = Form(...),
         note: str = Form(...),
+        payer_id: str | None = Form(default=None),
         photos: list[UploadFile] = File(...),
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> JSONResponse:
+        member = _current_member(request)
         members = request.app.state.members
-        if uploader_id not in members:
-            raise ApiProblem(422, "unknown_uploader", "uploader_id must be a configured member.")
+        effective_payer_id = payer_id or member.member_id
+        if effective_payer_id not in members:
+            raise ApiProblem(422, "unknown_payer", "payer_id must be a configured member.")
         if not note.strip():
             raise ApiProblem(422, "empty_note", "note must not be empty.")
         if not photos:
@@ -223,7 +297,7 @@ def create_app() -> FastAPI:
                     extract_expense,
                     temporary_paths,
                     note,
-                    uploader_id,
+                    member.member_id,
                     list(members),
                     model=DEFAULT_MODEL,
                 )
@@ -237,9 +311,16 @@ def create_app() -> FastAPI:
                 "Could not extract this receipt. Please retry.",
             ) from error
 
+        # The authenticated user's explicit payer selection is authoritative;
+        # the uploader still remains the meaning of "I" in the note.
+        draft.payer_id = effective_payer_id
+        draft.needs_clarification = [
+            clarification for clarification in draft.needs_clarification
+            if clarification.field != "payer_id"
+        ]
         required_facts_missing = any(
             value is None
-            for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id)
+            for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents)
         )
         if required_facts_missing or draft.needs_clarification:
             raise ApiProblem(
@@ -248,7 +329,6 @@ def create_app() -> FastAPI:
                 "The receipt cannot be automatically confirmed.",
                 details={"draft": draft.model_dump(mode="json")},
             )
-
         try:
             with _open_ledger() as ledger:
                 receipt = ledger.confirm_receipt(
@@ -256,13 +336,15 @@ def create_app() -> FastAPI:
                     note=note,
                     submission_id=submission_id,
                     provenance=ReceiptProvenance(
-                        uploader_id=uploader_id,
+                        uploader_id=member.member_id,
                         photos=receipt_photos,
                         raw_model_response=raw_model_response,
                         extractor_model=DEFAULT_MODEL,
                         prompt_version=PROMPT_VERSION,
                     ),
                 )
+            with AuthStore(_database_path()) as store:
+                store.audit_receipt(receipt.receipt_id, member.member_id)
         except SubmissionConflictError as error:
             raise ApiProblem(
                 409,
@@ -284,7 +366,11 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/receipts/{receipt_id}", response_model=ReceiptResponse, tags=["receipts"])
-    def get_receipt(receipt_id: int) -> ReceiptResponse:
+    def get_receipt(receipt_id: int, request: Request) -> ReceiptResponse:
+        member = _current_member(request)
+        with AuthStore(_database_path()) as store:
+            if not store.can_access_receipt(member.member_id, receipt_id):
+                raise ApiProblem(404, "receipt_not_found", "Receipt was not found.")
         try:
             with _open_ledger() as ledger:
                 receipt = ledger._get_receipt(receipt_id, created=False)
@@ -293,7 +379,11 @@ def create_app() -> FastAPI:
         return _receipt_response(receipt)
 
     @app.get("/receipts/{receipt_id}/photos/{photo_index}", tags=["receipts"])
-    def get_receipt_photo(receipt_id: int, photo_index: int) -> FileResponse:
+    def get_receipt_photo(receipt_id: int, photo_index: int, request: Request) -> FileResponse:
+        member = _current_member(request)
+        with AuthStore(_database_path()) as store:
+            if not store.can_access_receipt(member.member_id, receipt_id):
+                raise ApiProblem(404, "receipt_not_found", "Receipt was not found.")
         try:
             with _open_ledger() as ledger:
                 receipt = ledger._get_receipt(receipt_id, created=False)
@@ -310,19 +400,43 @@ def create_app() -> FastAPI:
     @app.get("/settlements/{month}", response_model=SettlementResponse, tags=["settlements"])
     def get_settlement(
         month: str,
+        request: Request,
         strategy: Literal["group_netting", "receipt_links"] = "group_netting",
     ) -> SettlementResponse:
+        member = _current_member(request)
         try:
             with _open_ledger() as ledger:
                 settlement = ledger.monthly_settlement(month, strategy=strategy)
         except LedgerValidationError as error:
             raise ApiProblem(422, "invalid_month", str(error)) from error
+        relevant = [transfer for transfer in settlement.transfers if member.member_id in {
+            transfer.from_member_id, transfer.to_member_id
+        }]
+        with AuthStore(_database_path()) as store:
+            display_names = {item.member_id: item.display_name for item in store.members()}
         return SettlementResponse(
             month=settlement.month,
             strategy=settlement.strategy,
-            balances_cents=settlement.balances_cents,
-            transfers=[transfer.model_dump() for transfer in settlement.transfers],
+            my_member_id=member.member_id,
+            my_display_name=member.display_name,
+            my_balance_cents=settlement.balances_cents.get(member.member_id, 0),
+            transfers=[{
+                "direction": "pay" if transfer.from_member_id == member.member_id else "receive",
+                "counterparty_member_id": transfer.to_member_id if transfer.from_member_id == member.member_id else transfer.from_member_id,
+                "counterparty_display_name": display_names.get(
+                    transfer.to_member_id if transfer.from_member_id == member.member_id else transfer.from_member_id,
+                    "",
+                ),
+                "amount_cents": transfer.amount_cents,
+            } for transfer in relevant],
         )
+
+    # This is deliberately mounted after all API routes.  The production Docker
+    # image supplies the built Vue app here; keeping it optional preserves a
+    # lightweight Python-only development and test environment.
+    static_dir = _static_dir()
+    if static_dir.is_dir():
+        app.mount("/app", StaticFiles(directory=static_dir, html=True), name="web-app")
 
     return app
 

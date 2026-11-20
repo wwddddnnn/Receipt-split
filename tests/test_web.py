@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from receipt_split.models import Clarification, ExpenseDraft
+from receipt_split.auth import AuthStore
 from receipt_split.web import create_app
 
 
@@ -24,18 +26,30 @@ def _complete_draft() -> ExpenseDraft:
     )
 
 
+@contextmanager
 def _client(monkeypatch, tmp_path: Path, extractor):
     monkeypatch.setenv("RECEIPT_SPLIT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("RECEIPT_SPLIT_DB_PATH", str(tmp_path / "data" / "ledger.sqlite"))
     monkeypatch.setenv("RECEIPT_SPLIT_MEMBERS", "AmyTest,BenTest,CindyTest,DanTest")
     monkeypatch.setattr("receipt_split.web.extract_expense", extractor)
-    return TestClient(create_app())
+    database_path = tmp_path / "data" / "ledger.sqlite"
+    with TestClient(create_app()) as client:
+        with AuthStore(database_path) as store:
+            for member_id in ("AmyTest", "BenTest", "CindyTest", "DanTest"):
+                store.provision_member(member_id, member_id.removesuffix("Test"), f"{member_id}-password")
+        yield client
+
+
+def _login(client: TestClient, member_id: str = "CindyTest"):
+    response = client.post("/auth/login", json={"member_id": member_id, "password": f"{member_id}-password"})
+    assert response.status_code == 200
+    return response
 
 
 def _submission(client: TestClient):
     return client.post(
         "/receipts",
-        data={"uploader_id": "CindyTest", "note": "AmyTest and BenTest split this."},
+        data={"payer_id": "CindyTest", "note": "AmyTest and BenTest split this."},
         files=[
             ("photos", ("page-1.png", PNG_ONE, "image/png")),
             ("photos", ("page-2.png", PNG_TWO, "image/png")),
@@ -49,25 +63,35 @@ def test_receipt_upload_extracts_multiple_images_and_confirms(monkeypatch, tmp_p
         return _complete_draft(), {"response_id": "test-response"}
 
     with _client(monkeypatch, tmp_path, extractor) as client:
-        assert client.get("/members").json() == {
-            "members": ["AmyTest", "BenTest", "CindyTest", "DanTest"]
-        }
+        assert client.get("/members").status_code == 401
+        _login(client)
+        assert client.get("/members").json() == {"members": [
+            {"member_id": "AmyTest", "display_name": "Amy"},
+            {"member_id": "BenTest", "display_name": "Ben"},
+            {"member_id": "CindyTest", "display_name": "Cindy"},
+            {"member_id": "DanTest", "display_name": "Dan"},
+        ]}
         response = _submission(client)
         assert response.status_code == 201
         body = response.json()
         assert body["status"] == "confirmed"
         assert body["submission_id"] == SUBMISSION_ID
         assert body["note"] == "AmyTest and BenTest split this."
+        assert body["created_by"] == "CindyTest"
         assert body["shares"] == {"AmyTest": 3000, "BenTest": 3000}
         assert len(body["photo_urls"]) == 2
         assert client.get(body["photo_urls"][0]).content == PNG_ONE
         assert client.get(body["photo_urls"][1]).content == PNG_TWO
-        assert client.get("/settlements/2026-11").json()["balances_cents"] == {
-            "AmyTest": -3000,
-            "BenTest": -3000,
-            "CindyTest": 6000,
-            "DanTest": 0,
-        }
+        settlement = client.get("/settlements/2026-11").json()
+        assert settlement["my_balance_cents"] == 6000
+        assert settlement["my_member_id"] == "CindyTest"
+        assert {item["counterparty_member_id"] for item in settlement["transfers"]} == {"AmyTest", "BenTest"}
+
+        client.post("/auth/logout")
+        _login(client, "DanTest")
+        assert client.get("/receipts").json() == []
+        assert client.get(f"/receipts/{body['receipt_id']}").status_code == 404
+        assert client.get(body["photo_urls"][0]).status_code == 404
 
     database = sqlite3.connect(tmp_path / "data" / "ledger.sqlite")
     row = database.execute(
@@ -84,6 +108,7 @@ def test_extraction_error_returns_json_and_service_stays_available(monkeypatch, 
         raise RuntimeError("model timeout")
 
     with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
         response = _submission(client)
         assert response.status_code == 502
         assert response.json()["error"]["code"] == "extraction_failed"
@@ -102,9 +127,21 @@ def test_unconfirmed_model_draft_returns_json_without_writing_receipt(monkeypatc
         return draft, {"response_id": "unclear"}
 
     with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
         response = _submission(client)
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "receipt_needs_clarification"
 
     database = sqlite3.connect(tmp_path / "data" / "ledger.sqlite")
     assert database.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 0
+
+
+def test_login_failure_does_not_leak_whether_account_exists(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        return _complete_draft(), {"response_id": "unused"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        for member_id, password in (("CindyTest", "incorrect"), ("Unknown", "incorrect")):
+            response = client.post("/auth/login", json={"member_id": member_id, "password": password})
+            assert response.status_code == 401
+            assert response.json()["error"]["message"] == "账号或密码错误"

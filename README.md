@@ -15,11 +15,12 @@ Add the key locally to `.env` as `OPENAI_API_KEY=...`. The extractor loads that 
 
 ## Docker foundation
 
-The repository includes a Docker Compose setup for the first phone-friendly web
-API. It accepts multiple receipt images, an original note, and an uploader ID;
-it extracts, validates, calculates, and immediately saves a confirmed receipt.
-This trusted-group MVP has no login or draft-review screen. Persistent
-application data is kept outside the image in `./data/`:
+The repository includes a Docker Compose setup for a phone-friendly web app.
+It accepts multiple receipt images and an original note; the logged-in member
+is the uploader and is what “我” means in the note. The payer defaults to that
+member but may be another group member. It extracts, validates, calculates,
+and immediately saves a confirmed receipt. Persistent application data is kept
+outside the image in `./data/`:
 
 ```text
 data/
@@ -37,17 +38,38 @@ docker compose logs -f
 ```
 
 The service defaults to `127.0.0.1:8080`, so it is not reachable from phones or
-the public internet. Do not change `RECEIPT_SPLIT_BIND_HOST` to `0.0.0.0` until
-the web app has login, receipt-level authorization, and HTTPS via a reverse
-proxy. The API seeds `AmyTest`, `BenTest`, `CindyTest`, and `DanTest` by default;
-override them with `RECEIPT_SPLIT_MEMBERS`. Image files live under
-`data/objects/`, while SQLite stores their ordered relative paths.
+the public internet. Open the web app at `http://127.0.0.1:8080/app/` and the
+API reference at `http://127.0.0.1:8080/docs`.
 
-The local API reference is at `http://127.0.0.1:8080/docs`. Its first endpoints
-are `GET /members`, `POST /receipts`, `GET /receipts/{receipt_id}`, photo URLs,
-and `GET /settlements/{month}`. `POST /receipts` uses `multipart/form-data` with
-`uploader_id`, `note`, and one or more `photos` fields. It accepts PNG/JPEG files
-up to 10 MB each, at most 10 images, and sends them to the model in upload order.
+The first startup seeds `AmyTest`, `BenTest`, `CindyTest`, and `DanTest` as
+members, but does not create passwords. A maintainer creates or resets a member
+login interactively; password text is never placed in `.env` or SQLite (only a
+scrypt password hash is saved):
+
+```bash
+docker compose exec receipt-split receipt-split-admin provision \
+  --member-id CindyTest --display-name Cindy
+docker compose exec receipt-split receipt-split-admin reset-password \
+  --member-id CindyTest
+```
+
+The app sends all receipt, image, and settlement requests with the session
+cookie. A member can only read receipts they created, uploaded, paid, or share;
+monthly settlement returns only that member’s balance and transfers involving
+them. The creator/audit fields are derived by the backend from the session.
+
+For public or phone-network deployment, place an HTTPS reverse proxy (for
+example Caddy, with a real domain and certificate) in front of this container,
+set `RECEIPT_SPLIT_COOKIE_SECURE=true`, then—and only then—set
+`RECEIPT_SPLIT_BIND_HOST=0.0.0.0`. Do not expose the present HTTP container
+directly to the public internet.
+
+The protected API endpoints include `POST /auth/login`, `POST /auth/logout`,
+`GET /auth/me`, `GET /members`, `GET /receipts`, `POST /receipts`, individual
+receipt/photo URLs, and `GET /settlements/{month}`. `POST /receipts` uses
+`multipart/form-data` with optional `payer_id`, `note`, and one or more `photos`
+fields. It accepts PNG/JPEG files up to 10 MB each, at most 10 images, and sends
+them to the model in upload order.
 An optional `Idempotency-Key` request header must be a UUID; otherwise the API
 generates one and returns it in the response. Extraction, validation, and storage
 errors return structured JSON without terminating the API process.
@@ -63,6 +85,14 @@ conda run -n receipt-split receipt-split examples/receipts/case-01-full-split.pn
 ```
 
 The default model is `gpt-6-astra`; override it with `--model` when desired. Each standalone invocation writes `run.json`, `raw_response.json`, `draft.json`, `timing.json`, and (when requested) `evaluation.json` under `runs/<UTC timestamp>-<id>/`. A failed request retains `run.json` and `error.json` instead. Expected answers are never sent to the model.
+
+For a multi-page receipt, repeat `--photo` in page order; the original single positional photo remains supported:
+
+```bash
+receipt-split --photo receipts/page-01.jpg --photo receipts/page-02.jpg \
+  --note 'CindyTest 垫付，CindyTest 和 AmyTest 平分。' \
+  --uploader CindyTest --members CindyTest,AmyTest
+```
 
 Evaluation checks whether each clarification identifies the expected field, but its natural-language `reason` is retained for review rather than scored verbatim.
 
