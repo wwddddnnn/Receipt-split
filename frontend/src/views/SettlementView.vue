@@ -46,13 +46,15 @@ onMounted(load)
     <p v-if="error" class="alert">{{ error }}</p>
     <template v-else-if="settlement">
       <section class="card">
-        <h2>净余额</h2>
-        <p class="hint">{{ settlement.my_display_name }} 本月的结余。正数为应收，负数为应付。</p>
+        <h2>相关成员的净余额</h2>
+        <p class="hint">本月转账关系树中的成员。正数为应收，负数为应付。</p>
         <dl class="amount-list">
-          <dt>{{ settlement.my_display_name }}</dt>
-          <dd :class="{ positive: settlement.my_balance_cents > 0, negative: settlement.my_balance_cents < 0 }">
-            {{ settlement.my_balance_cents > 0 ? '+' : '' }}{{ money(settlement.my_balance_cents) }}
-          </dd>
+          <template v-for="balance in settlement.balances" :key="balance.member_id">
+            <dt>{{ balance.display_name }}</dt>
+            <dd :class="{ positive: balance.balance_cents > 0, negative: balance.balance_cents < 0 }">
+              {{ balance.balance_cents > 0 ? '+' : '' }}{{ money(balance.balance_cents) }}
+            </dd>
+          </template>
         </dl>
       </section>
       <section class="card">

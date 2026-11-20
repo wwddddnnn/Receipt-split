@@ -85,6 +85,8 @@ def test_receipt_upload_extracts_multiple_images_and_confirms(monkeypatch, tmp_p
         settlement = client.get("/settlements/2026-11").json()
         assert settlement["my_balance_cents"] == 6000
         assert settlement["my_member_id"] == "CindyTest"
+        assert {item["member_id"] for item in settlement["balances"]} == {"AmyTest", "BenTest", "CindyTest"}
+        assert "DanTest" not in {item["member_id"] for item in settlement["balances"]}
         assert {item["counterparty_member_id"] for item in settlement["transfers"]} == {"AmyTest", "BenTest"}
 
         client.post("/auth/logout")

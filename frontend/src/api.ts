@@ -22,6 +22,7 @@ export type Settlement = {
   my_member_id: string
   my_display_name: string
   my_balance_cents: number
+  balances: { member_id: string; display_name: string; balance_cents: number }[]
   transfers: { direction: 'pay' | 'receive'; counterparty_member_id: string; counterparty_display_name: string; amount_cents: number }[]
 }
 

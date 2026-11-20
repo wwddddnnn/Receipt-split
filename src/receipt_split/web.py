@@ -77,13 +77,37 @@ class ReceiptResponse(BaseModel):
     created: bool
 
 
+class SettlementBalance(BaseModel):
+    member_id: str
+    display_name: str
+    balance_cents: int
+
+
 class SettlementResponse(BaseModel):
     month: str
     strategy: Literal["group_netting", "receipt_links"]
     my_member_id: str
     my_display_name: str
     my_balance_cents: int
+    balances: list[SettlementBalance]
     transfers: list[dict[str, Any]]
+
+
+def _settlement_tree_member_ids(member_id: str, transfers: list[Any]) -> set[str]:
+    """Return the transfer-graph component containing the signed-in member."""
+    neighbors: dict[str, set[str]] = {}
+    for transfer in transfers:
+        neighbors.setdefault(transfer.from_member_id, set()).add(transfer.to_member_id)
+        neighbors.setdefault(transfer.to_member_id, set()).add(transfer.from_member_id)
+    visible = {member_id}
+    pending = [member_id]
+    while pending:
+        current = pending.pop()
+        for neighbor in neighbors.get(current, set()):
+            if neighbor not in visible:
+                visible.add(neighbor)
+                pending.append(neighbor)
+    return visible
 
 
 def _configured_members() -> tuple[str, ...]:
@@ -409,6 +433,7 @@ def create_app() -> FastAPI:
                 settlement = ledger.monthly_settlement(month, strategy=strategy)
         except LedgerValidationError as error:
             raise ApiProblem(422, "invalid_month", str(error)) from error
+        tree_member_ids = _settlement_tree_member_ids(member.member_id, settlement.transfers)
         relevant = [transfer for transfer in settlement.transfers if member.member_id in {
             transfer.from_member_id, transfer.to_member_id
         }]
@@ -420,6 +445,11 @@ def create_app() -> FastAPI:
             my_member_id=member.member_id,
             my_display_name=member.display_name,
             my_balance_cents=settlement.balances_cents.get(member.member_id, 0),
+            balances=[SettlementBalance(
+                member_id=member_id,
+                display_name=display_names.get(member_id, member_id),
+                balance_cents=settlement.balances_cents.get(member_id, 0),
+            ) for member_id in sorted(tree_member_ids, key=lambda item: (display_names.get(item, item), item))],
             transfers=[{
                 "direction": "pay" if transfer.from_member_id == member.member_id else "receive",
                 "counterparty_member_id": transfer.to_member_id if transfer.from_member_id == member.member_id else transfer.from_member_id,
