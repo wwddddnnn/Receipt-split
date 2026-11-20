@@ -59,8 +59,8 @@ onMounted(load)
         <h2>转账建议</h2>
         <ul v-if="settlement.transfers.length" class="transfer-list">
           <li v-for="transfer in settlement.transfers" :key="`${transfer.direction}-${transfer.counterparty_member_id}`">
-            <span v-if="transfer.direction === 'pay'">你 <b>转给</b> {{ transfer.counterparty_display_name }}</span>
-            <span v-else>{{ transfer.counterparty_display_name }} <b>转给</b> 你</span>
+            <span v-if="transfer.direction === 'pay'">{{ settlement.my_display_name }} <b>转给</b> {{ transfer.counterparty_display_name }}</span>
+            <span v-else>{{ transfer.counterparty_display_name }} <b>转给</b> {{ settlement.my_display_name }}</span>
             <strong>{{ money(transfer.amount_cents) }}</strong>
           </li>
         </ul>
