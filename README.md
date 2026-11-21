@@ -1,154 +1,270 @@
-# Receipt Split — phase 1
+# 一起分账 · Receipt Split
 
-This is the requested first-phase command-line baseline. It sends one local JPG/PNG receipt and a split note to a vision model, returns a validated `ExpenseDraft`, and saves an immutable per-run audit bundle.
+[中文](#中文) · [English](#english)
 
-## Setup with Conda
+---
+
+<a id="中文"></a>
+
+## 功能介绍
+
+**一起分账**是一个面向固定好友小组的收据分账工具。拍下收据，写一句备注，系统会读取金额与分账意图，生成可核对的账单，并在月底给出转账建议。
+
+上传一张或多张连续的 JPEG / PNG 收据图片，填写自然语言备注，例如“我垫付，我们三个平摊”。系统会结合当前登录身份理解“我”，并提取日期、实付金额、税前小计、垫付人和分账规则。
+
+商品归属与税、小费、服务费、配送费等附加费用会分别处理：先分配明确的商品金额与余款，再按各自的税前承担比例分摊附加费用。所有金额以 CAD 整数分保存；遇到分币时，系统以稳定规则补足，确保每笔账单的承担总额严格等于实付金额。
+
+识别结果不完整或存在冲突时，账单会保存为待确认草稿，不参与月结。你可以对照原始收据补全信息、调整个人项目和余款平摊成员，预览结果后再确认入账。已入账账单仍可编辑，相关月份的月结会实时重算。
+
+账单列表支持按月份和状态筛选；月结页面展示自己的净余额及转账建议，并提供“全组净额”和“按收据关系”两种结算方式。
+
+## 页面截图
+<p align="center">
+  <img src="docs/screenshots/upload-mobile.PNG" width="48%" alt="手机端上传收据与填写备注">
+  <img src="docs/screenshots/receipt-edit-desktop.png" width="48%" alt="桌面端对照收据编辑分账草稿">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/receipt-list.PNG" width="48%" alt="账单列表">
+  <img src="docs/screenshots/settlement.PNG" width="48%" alt="月结与转账建议">
+</p>
+
+## Easy start
+
+需要已安装 Docker Desktop，以及一个可用的 `OPENAI_API_KEY`。
 
 ```bash
-cd /Users/doriswu/code/Python/receipt-split
-conda create -n receipt-split python=3.12 -y
-conda run -n receipt-split python -m pip install -e '.[dev]'
+git clone <your-repository-url>
+cd receipt-split
 cp .env.example .env
 ```
 
-Add the key locally to `.env` as `OPENAI_API_KEY=...`. The extractor loads that file at runtime; `.env` is ignored by Git, while `.env.example` is the safe template. A system `OPENAI_API_KEY`, if set, takes precedence.
+在 `.env` 中填写 API Key：
 
-## Docker foundation
-
-The repository includes a Docker Compose setup for a phone-friendly web app.
-It accepts multiple receipt images and an original note; the logged-in member
-is the uploader and is what “我” means in the note. The payer defaults to that
-member but may be another group member. It extracts, validates, calculates,
-and immediately saves a confirmed receipt. Persistent application data is kept
-outside the image in `./data/`:
-
-```text
-data/
-  ledger.sqlite          # created once the ledger is initialized
-  objects/               # future original receipt-image objects
+```dotenv
+OPENAI_API_KEY=...
 ```
 
-Neither the database, images, nor `.env` are committed to Git. Build and start
-the local-only service with Docker Desktop:
+启动应用：
 
 ```bash
 docker compose up --build -d
 curl http://127.0.0.1:8080/healthz
-docker compose logs -f
 ```
 
-The service defaults to `127.0.0.1:8080`, so it is not reachable from phones or
-the public internet. Open the web app at `http://127.0.0.1:8080/app/` and the
-API reference at `http://127.0.0.1:8080/docs`.
+浏览器打开应用：<http://127.0.0.1:8080/app/>；API 文档：<http://127.0.0.1:8080/docs>。
 
-The first startup seeds `AmyTest`, `BenTest`, `CindyTest`, and `DanTest` as
-members, but does not create passwords. A maintainer creates or resets a member
-login interactively; password text is never placed in `.env` or SQLite (only a
-scrypt password hash is saved):
+首次启动会创建成员记录，但不会预设密码。使用维护命令创建或更新登录账号：
 
 ```bash
 docker compose exec receipt-split receipt-split-admin provision \
-  --member-id CindyTest --display-name Cindy
+  --member-id <member-id> \
+  --display-name <display-name>
+```
+
+重设密码：
+
+```bash
 docker compose exec receipt-split receipt-split-admin reset-password \
-  --member-id CindyTest
+  --member-id <member-id>
 ```
 
-The app sends all receipt, image, and settlement requests with the session
-cookie. A member can only read receipts they created, uploaded, paid, or share;
-monthly settlement returns only that member’s balance and transfers involving
-them. The creator/audit fields are derived by the backend from the session.
-
-For public or phone-network deployment, place an HTTPS reverse proxy (for
-example Caddy, with a real domain and certificate) in front of this container,
-set `RECEIPT_SPLIT_COOKIE_SECURE=true`, then—and only then—set
-`RECEIPT_SPLIT_BIND_HOST=0.0.0.0`. Do not expose the present HTTP container
-directly to the public internet.
-
-The protected API endpoints include `POST /auth/login`, `POST /auth/logout`,
-`GET /auth/me`, `GET /members`, `GET /receipts`, `POST /receipts`, individual
-receipt/photo URLs, and `GET /settlements/{month}`. `POST /receipts` uses
-`multipart/form-data` with optional `payer_id`, `note`, and one or more `photos`
-fields. It accepts PNG/JPEG files up to 10 MB each, at most 10 images, and sends
-them to the model in upload order.
-An optional `Idempotency-Key` request header must be a UUID; otherwise the API
-generates one and returns it in the response. Extraction, validation, and storage
-errors return structured JSON without terminating the API process.
-
-## Run a real API extraction
+停止服务：
 
 ```bash
-conda run -n receipt-split receipt-split examples/receipts/case-01-full-split.png \
-  --note '我垫付，我们三个平摊。' \
-  --uploader CindyTest \
-  --members CindyTest,AmyTest,BenTest \
-  --expected examples/expected-case-01.json
+docker compose down
 ```
 
-The default model is `gpt-6-astra`; override it with `--model` when desired. Each standalone invocation writes `run.json`, `raw_response.json`, `draft.json`, `timing.json`, and (when requested) `evaluation.json` under `runs/<UTC timestamp>-<id>/`. A failed request retains `run.json` and `error.json` instead. Expected answers are never sent to the model.
+默认服务仅绑定 `127.0.0.1`。如需让手机访问，请先配置 HTTPS 反向代理，再将 `RECEIPT_SPLIT_BIND_HOST` 设为 `0.0.0.0`，并启用 `RECEIPT_SPLIT_COOKIE_SECURE=true`。
 
-For a multi-page receipt, repeat `--photo` in page order; the original single positional photo remains supported:
+## AI 开发模式
 
-```bash
-receipt-split --photo receipts/page-01.jpg --photo receipts/page-02.jpg \
-  --note 'CindyTest 垫付，CindyTest 和 AmyTest 平分。' \
-  --uploader CindyTest --members CindyTest,AmyTest
-```
+本项目采用**评估驱动开发（Evaluation-Driven Development）**与 **AI 结对**的方式迭代。每次改动先明确一个可观察的用户行为和验收条件，再决定实现，而不是先改代码、再寻找理由验证它。
 
-Evaluation checks whether each clarification identifies the expected field, but its natural-language `reason` is retained for review rather than scored verbatim.
+你负责产品判断：定义要解决的真实场景，提供或确认预期结果，查看 AI 提取的原始输出，并对错误提出第一个根因假设。Codex 负责阅读现有实现与测试，提出最小改动方案，完成选定实验并运行相应验证；常规代码审查可交由 Reviewer 完成。
 
-### Fee allocation
+一次典型迭代遵循以下过程：
 
-The draft records the items/services subtotal separately from the paid total. `individual_charges` contain pre-fee item ownership; any unassigned subtotal is split over `remainder_member_ids`. Tax, tip, service, delivery, and other fees are then allocated proportionally to each member's resulting pre-fee subtotal. Fractional cents use the largest-remainder method, with member ID as the deterministic tie-breaker.
+1. 定义行为与验收，例如“编辑账单时日期可留空，确认后自动使用创建日期；税前小计可留空，并以实付总额计算分账”。
+2. 对照已有接口、数据模型、前端交互和测试，确认改动边界；前后端可分轮推进。
+3. 实施最小改动，并将验收条件写成回归测试。
+4. 分层验证：后端改动运行 pytest，前端改动运行生产构建，涉及部署时再检查服务和页面。
+5. 记录改动、运行命令、验证结果和待解决问题，再进入下一轮。
 
-Clarification reasons are written in concise English by default, even when the receipt or note is in another language.
+收据提取质量也以评估驱动：固定样例和标准答案只在模型调用后用于评分，绝不发送给模型。每轮只验证一个假设，并记录实际输出、根因假设、实验改动和复测结果；随后运行保留样例，检查改动是否只对单一案例有效。
 
-## SQLite ledger
+## 本地开发与技术说明
 
-Initialize a local ledger with its fixed member group, then save a reviewed `draft.json`. A complete draft is stored as `confirmed` with recalculated shares; a draft with unresolved clarifications is retained as `pending` with its full source snapshot but no share rows. Pending receipts are excluded from monthly balances and transfer suggestions. Identical submission-ID retries remain idempotent.
-
-```bash
-receipt-split-ledger init --database ledger.sqlite --members CindyTest,AmyTest,BenTest
-receipt-split-ledger confirm path/to/draft.json \
-  --database ledger.sqlite --note 'AmyTest tea' --submission-id 'unique-client-id' \
-  --uploader CindyTest --photo path/to/receipt.png --raw-response path/to/raw_response.json \
-  --model gpt-6-astra --prompt-version 2026-11-16.phase1-fee-proration
-receipt-split-ledger monthly 2026-02 --database ledger.sqlite --strategy group_netting
-```
-
-The database has `members`, `receipts`, and `receipt_shares` tables. `receipts.photo_paths_json` is the only image metadata: a JSON list of relative image addresses, such as `["objects/abc123.png"]`; images themselves are immutable files in the database-adjacent `objects/` directory. Raw model response, the reviewed confirmation draft, and model/prompt versions remain in SQLite for essential troubleshooting and reproducibility. A legacy database is migrated automatically: each existing image BLOB is exported to `objects/` and then removed from SQLite. Repeat `--photo` to associate several ordered images with one receipt. `monthly` uses the confirmed receipt date to report each member's paid-minus-owed balance and suggested transfers. Choose `group_netting` (default) to net the whole group and usually reduce transfers, or `receipt_links` to preserve each debtor-to-payer relationship while netting reciprocal debts between the same two members. `ledger.sqlite` and `objects/` are ignored by Git.
-
-## Offline checks (no API call)
+### 本地环境与验证
 
 ```bash
+conda create -n receipt-split python=3.12 -y
+conda run -n receipt-split python -m pip install -e '.[dev]'
 conda run -n receipt-split pytest
-conda run -n receipt-split receipt-split does-not-exist.jpg \
-  --note '我垫付，我们三个平摊。' --uploader CindyTest --members CindyTest,AmyTest,BenTest
 ```
 
-The second command verifies failure-audit creation and intentionally exits with status `1`.
+前端开发与构建：
 
-## Live model evaluation with pytest
+```bash
+cd frontend
+npm ci
+npm run dev
+# 或执行生产构建
+npm run build
+```
 
-Regular `pytest` keeps model evaluations skipped, so it stays offline and does not use API credits. To run every case in `examples/cases.json` against the live model and retain every actual output:
+默认 `pytest` 不会调用模型，也不会使用 API 额度。要用固定样例执行真实模型评估：
 
 ```bash
 conda run -n receipt-split pytest --run-model-evals
 ```
 
-To run only case 4, use pytest's selector:
+每次真实提取会在 `runs/<timestamp>-<id>/` 下保留运行元数据、原始模型响应、结构化草稿、耗时和评估结果，便于人工核对与复现。
+
+### 技术栈与数据处理
+
+- 后端：Python、FastAPI、Pydantic、SQLite
+- 前端：Vue 3、TypeScript、Vite
+- LLM：OpenAI Responses API 与 Structured Outputs
+- 部署：Docker Compose
+- 测试：pytest、httpx
+
+原始收据以内容寻址文件保存在 `data/objects/`；SQLite 保存图片相对路径、账本数据、确认草稿、模型原始响应和必要审计信息。成员仅能访问自己创建、上传、垫付或参与分摊的收据。`.env`、本地数据库、原始图片和运行产物均不会提交到 Git。
+
+当前版本面向可信好友小组的本地或受控部署；多群组管理、多币种、退款、自动转账、重复收据识别和本地模型提取仍不在当前范围内。
+
+---
+
+<a id="english"></a>
+
+# Receipt Split
+
+[中文](#中文) · [English](#english)
+
+## Features
+
+**Receipt Split** is a receipt-based expense-splitting tool for a trusted, fixed group of friends. Photograph a receipt, add a short note, review the generated bill, and get monthly settlement suggestions.
+
+Upload one or more consecutive JPEG or PNG receipt images and write a natural-language note, such as “I paid; split this among the three of us.” The app uses the signed-in member to resolve “I”, then extracts the receipt date, paid total, pre-fee subtotal, payer, and split rule.
+
+Item ownership is kept separate from tax, tip, service, delivery, and other fees. The app assigns known items and any shared remainder first, then allocates fees in proportion to each member’s pre-fee amount. Amounts are stored as whole Canadian cents; deterministic rounding ensures that individual shares always add up exactly to the paid total.
+
+If extraction is incomplete or contradictory, the receipt remains a pending draft and is excluded from settlement. Participants can compare it with the original receipt, complete or correct fields, adjust individual charges and shared members, preview the result, and then confirm it. Confirmed receipts can still be edited, with affected monthly settlements recalculated immediately.
+
+The receipt list filters by month and status. The settlement page shows your net balance and transfer suggestions, with a choice between group netting and receipt-link settlement.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/upload-mobile.PNG" width="30%" alt="Mobile receipt upload and note entry">
+  <img src="docs/screenshots/receipt-edit-desktop.png" width="62%" alt="Desktop receipt draft review and editing">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/receipt-list.PNG" width="48%" alt="Receipt list">
+  <img src="docs/screenshots/settlement.PNG" width="48%" alt="Monthly settlement and transfer suggestions">
+</p>
+
+## Easy start
+
+You need Docker Desktop and a valid `OPENAI_API_KEY`.
 
 ```bash
-conda run -n receipt-split pytest --run-model-evals -k 04-individual-menu-items
+git clone <your-repository-url>
+cd receipt-split
+cp .env.example .env
 ```
 
-Every pytest invocation creates `runs/<run-id>/pytest-summary.json`, whether it is offline or live. A live run additionally writes actual outputs beneath `runs/<run-id>/cases/<case-id>/`; only selected cases appear there. For example, the case-4 command writes exactly one case's actual output. There is no `latest` alias; the timestamped directory is the run index.
+Add your key to `.env`:
 
-## Synthetic phase-one fixtures
+```dotenv
+OPENAI_API_KEY=...
+```
 
-`examples/receipts/` holds fictional or user-supplied receipts for the configured cases; no real payment credentials are included. `examples/cases.json` ties each image to its note, member set, and standard answer. Standard answers are supplied to the CLI only after model extraction, so they are used for scoring and never sent to the API.
+Start the application:
 
-Expected case 02 encodes the **extraction rule** (`AmyTest: 1200`, then all three share the remainder), rather than the derived final shares. Case 03 asserts `5650`, the paid total, rather than the `$50.00` subtotal.
+```bash
+docker compose up --build -d
+curl http://127.0.0.1:8080/healthz
+```
 
-## API behavior
+Open the app at <http://127.0.0.1:8080/app/> and the API documentation at <http://127.0.0.1:8080/docs>.
 
-The implementation uses the Responses API with Pydantic Structured Outputs. The OpenAI image-input guide supports Base64 data URLs for image analysis, and notes that vision can make mistakes; therefore all raw responses are retained for human review. See the [official image-input guide](https://developers.openai.com/api/docs/guides/images-vision?api-mode=responses) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
+The first startup creates member records but not passwords. Provision or update a member login with:
+
+```bash
+docker compose exec receipt-split receipt-split-admin provision \
+  --member-id <member-id> \
+  --display-name <display-name>
+```
+
+To reset a password:
+
+```bash
+docker compose exec receipt-split receipt-split-admin reset-password \
+  --member-id <member-id>
+```
+
+Stop the service with:
+
+```bash
+docker compose down
+```
+
+The default service binds only to `127.0.0.1`. To access it from a phone, configure an HTTPS reverse proxy first, then set `RECEIPT_SPLIT_BIND_HOST=0.0.0.0` and `RECEIPT_SPLIT_COOKIE_SECURE=true`.
+
+## AI development practice
+
+This project uses **Evaluation-Driven Development** paired with **AI collaboration**. Every change begins with an observable user behavior and acceptance criteria—not code written first and justified afterwards.
+
+You own product judgment: defining the real scenario, providing or confirming expected outcomes, inspecting raw AI extraction output, and forming the first root-cause hypothesis. Codex reads the existing implementation and tests, proposes the smallest viable change, implements the chosen experiment, and runs relevant validation. Routine code review can be delegated to a Reviewer.
+
+A typical iteration is:
+
+1. Define the behavior and acceptance criteria.
+2. Compare the existing API, data model, UI behavior, and tests to establish a change boundary; frontend and backend work may be split into separate rounds.
+3. Make the smallest necessary change and encode the acceptance criteria as regression tests.
+4. Validate by layer: run pytest for backend work, build the frontend for UI work, and check the running service and page when deployment is involved.
+5. Record the change, commands, verification result, and unresolved questions before the next round.
+
+Extraction quality follows the same discipline. Fixed cases and expected answers are used only to score a response after a model call—they are never sent to the model. Each round tests one hypothesis, records the observed output, root-cause hypothesis, experimental change, and retest result, then runs held-out cases to detect overfitting.
+
+## Local development and technical notes
+
+### Environment and checks
+
+```bash
+conda create -n receipt-split python=3.12 -y
+conda run -n receipt-split python -m pip install -e '.[dev]'
+conda run -n receipt-split pytest
+```
+
+For frontend development and builds:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+# or build production assets
+npm run build
+```
+
+Regular `pytest` never calls the model or consumes API credits. Run the fixed examples against the live model with:
+
+```bash
+conda run -n receipt-split pytest --run-model-evals
+```
+
+Every live extraction retains run metadata, the raw model response, parsed draft, timing, and evaluation results under `runs/<timestamp>-<id>/` for review and reproduction.
+
+### Stack and data handling
+
+- Backend: Python, FastAPI, Pydantic, SQLite
+- Frontend: Vue 3, TypeScript, Vite
+- LLM: OpenAI Responses API with Structured Outputs
+- Deployment: Docker Compose
+- Testing: pytest and httpx
+
+Original receipt images are stored as content-addressed files in `data/objects/`. SQLite stores image-relative paths, ledger data, confirmed drafts, raw model responses, and essential audit data. Members can access only receipts they created, uploaded, paid, or share. `.env`, local databases, receipt images, and run artifacts are excluded from Git.
+
+The current release targets trusted groups in local or controlled deployments. Multi-group management, multiple currencies, refunds, automatic transfers, duplicate-receipt detection, and local-model extraction remain out of scope.
