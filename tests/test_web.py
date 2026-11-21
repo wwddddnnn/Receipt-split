@@ -159,14 +159,16 @@ def test_receipt_edit_recalculates_shares_and_rejects_stale_version(monkeypatch,
         original = _submission(client).json()
         payload = {
             "version": original["version"], "receipt_date": "2026-12-01", "total_cents": 6000,
+            "subtotal_cents": 5000,
             "payer_id": "AmyTest", "note": "edited note",
             "individual_charges": [{"member_id": "AmyTest", "amount_cents": 1000}],
             "remainder_member_ids": ["BenTest"],
         }
-        assert client.post(f"/receipts/{original['receipt_id']}/preview", json=payload).json() == {"AmyTest": 1000, "BenTest": 5000}
+        assert client.post(f"/receipts/{original['receipt_id']}/preview", json=payload).json() == {"AmyTest": 1200, "BenTest": 4800}
         saved = client.put(f"/receipts/{original['receipt_id']}", json=payload)
         assert saved.status_code == 200
-        assert saved.json()["shares"] == {"AmyTest": 1000, "BenTest": 5000}
+        assert saved.json()["subtotal_cents"] == 5000
+        assert saved.json()["shares"] == {"AmyTest": 1200, "BenTest": 4800}
         assert saved.json()["version"] == original["version"] + 1
         assert client.put(f"/receipts/{original['receipt_id']}", json=payload).status_code == 409
 
@@ -183,11 +185,46 @@ def test_receipt_edit_can_save_incomplete_draft_before_confirmation(monkeypatch,
         assert original["status"] == "pending"
         draft = client.put(f"/receipts/{original['receipt_id']}/draft", json={
             "version": original["version"], "receipt_date": None, "total_cents": None,
+            "subtotal_cents": None,
             "payer_id": None, "note": "come back later", "individual_charges": [], "remainder_member_ids": [],
         })
         assert draft.status_code == 200
         assert draft.json()["status"] == "pending"
-        assert {item["field"] for item in draft.json()["needs_clarification"]} >= {"receipt_date", "total_cents", "payer_id"}
+        assert {item["field"] for item in draft.json()["needs_clarification"]} >= {"total_cents", "payer_id"}
+
+
+def test_receipt_edit_rejects_subtotal_above_paid_total(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        return _complete_draft(), {"response_id": "subtotal-validation"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
+        original = _submission(client).json()
+        response = client.post(f"/receipts/{original['receipt_id']}/preview", json={
+            "version": original["version"], "receipt_date": "2026-11-17", "total_cents": 6000,
+            "subtotal_cents": 6001, "payer_id": "CindyTest", "note": "invalid subtotal",
+            "individual_charges": [], "remainder_member_ids": ["AmyTest", "BenTest"],
+        })
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_receipt"
+
+
+def test_receipt_confirmation_falls_back_to_created_date_and_allows_empty_subtotal(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        return _complete_draft(), {"response_id": "optional-fields"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
+        original = _submission(client).json()
+        response = client.put(f"/receipts/{original['receipt_id']}", json={
+            "version": original["version"], "receipt_date": None, "total_cents": 6000,
+            "subtotal_cents": None, "payer_id": "CindyTest", "note": "no date or subtotal",
+            "individual_charges": [], "remainder_member_ids": ["AmyTest", "BenTest"],
+        })
+        assert response.status_code == 200
+        assert response.json()["receipt_date"]
+        assert response.json()["subtotal_cents"] is None
+        assert response.json()["shares"] == {"AmyTest": 3000, "BenTest": 3000}
 
 
 def test_confirmed_receipt_cannot_be_saved_as_draft(monkeypatch, tmp_path: Path):
@@ -199,6 +236,7 @@ def test_confirmed_receipt_cannot_be_saved_as_draft(monkeypatch, tmp_path: Path)
         original = _submission(client).json()
         response = client.put(f"/receipts/{original['receipt_id']}/draft", json={
             "version": original["version"], "receipt_date": None, "total_cents": None,
+            "subtotal_cents": None,
             "payer_id": None, "note": "", "individual_charges": [], "remainder_member_ids": [],
         })
         assert response.status_code == 409

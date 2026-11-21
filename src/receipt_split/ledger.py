@@ -497,8 +497,8 @@ class Ledger:
         )
 
     @staticmethod
-    def edit_draft(*, receipt_date: str | None, total_cents: int | None, payer_id: str | None, individual_charges: list[dict[str, Any]], remainder_member_ids: list[str]) -> ExpenseDraft:
-        return ExpenseDraft(receipt_date=receipt_date, total_cents=total_cents, subtotal_cents=total_cents, payer_id=payer_id, individual_charges=individual_charges, remainder_member_ids=remainder_member_ids)
+    def edit_draft(*, receipt_date: str | None, total_cents: int | None, subtotal_cents: int | None, payer_id: str | None, individual_charges: list[dict[str, Any]], remainder_member_ids: list[str]) -> ExpenseDraft:
+        return ExpenseDraft(receipt_date=receipt_date, total_cents=total_cents, subtotal_cents=subtotal_cents, payer_id=payer_id, individual_charges=individual_charges, remainder_member_ids=remainder_member_ids)
 
     def preview_edit(self, draft: ExpenseDraft, member_ids: set[str]) -> dict[str, int]:
         involved = {draft.payer_id, *draft.remainder_member_ids, *(charge.member_id for charge in draft.individual_charges)}
@@ -506,7 +506,8 @@ class Ledger:
         if unknown:
             raise LedgerValidationError(f"members are not in the ledger: {', '.join(unknown)}")
         try:
-            return calculate_shares(draft)
+            calculation_draft = draft.model_copy(update={"subtotal_cents": draft.subtotal_cents or draft.total_cents})
+            return calculate_shares(calculation_draft)
         except ValueError as error:
             raise LedgerValidationError(str(error)) from error
 
@@ -516,17 +517,12 @@ class Ledger:
         unknown = sorted(member_id for member_id in involved if member_id and member_id not in members)
         if unknown:
             raise LedgerValidationError(f"members are not in the ledger: {', '.join(unknown)}")
+        if draft.total_cents is not None and draft.subtotal_cents is not None and draft.subtotal_cents > draft.total_cents:
+            raise LedgerValidationError("subtotal_cents cannot exceed total_cents")
         shares: dict[str, int] = {}
-        if confirm:
-            if not note.strip():
-                raise LedgerValidationError("note must not be empty")
-            if any(value is None for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id)):
-                raise LedgerValidationError("date, total, and payer must be provided")
-            shares = self.preview_edit(draft, members)
-            draft.needs_clarification = []
-        else:
+        if not confirm:
             clarifications = []
-            for field, value in (("receipt_date", draft.receipt_date), ("total_cents", draft.total_cents), ("payer_id", draft.payer_id)):
+            for field, value in (("total_cents", draft.total_cents), ("payer_id", draft.payer_id)):
                 if value is None:
                     clarifications.append({"field": field, "reason": "Please provide this field before confirming."})
             if not clarifications and not draft.individual_charges and not draft.remainder_member_ids:
@@ -541,6 +537,15 @@ class Ledger:
                 raise ReceiptUpdateConflictError("receipt was updated by someone else")
             if not confirm and row["status"] != "pending":
                 raise ReceiptStateError("confirmed receipts cannot be saved as drafts")
+            if confirm:
+                if not note.strip():
+                    raise LedgerValidationError("note must not be empty")
+                if any(value is None for value in (draft.total_cents, draft.payer_id)):
+                    raise LedgerValidationError("total and payer must be provided")
+                if draft.receipt_date is None:
+                    draft.receipt_date = datetime.fromisoformat(row["created_at"]).date().isoformat()
+                shares = self.preview_edit(draft, members)
+                draft.needs_clarification = []
             status = "confirmed" if confirm else "pending"
             content_hash = self._content_hash(confirmed_draft=draft.model_dump(mode="json"), note=note, photo_paths=json.loads(row["photo_paths_json"]), raw_model_response=json.loads(row["raw_model_response_json"]), uploader_id=row["uploader_id"], extractor_model=row["extractor_model"], prompt_version=row["prompt_version"], status=status, shares=shares)
             cursor = self.connection.execute(
