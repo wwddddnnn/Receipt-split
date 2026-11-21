@@ -30,5 +30,33 @@
     "uploader_id": "CindyTest",
     "members": ["CindyTest", "AmyTest", "BenTest"],
     "expected": "expected-case-04.json"
+  },
+  {
+    "id": "05-amy-ben-split",
+    "photo": "receipts/case-05-amy-ben-split.jpg",
+    "note": "AmyTest 垫付，AmyTest 和 BenTest 平分。",
+    "uploader_id": "AmyTest",
+    "members": ["AmyTest", "BenTest"],
+    "expected": "expected-case-05.json"
+  },
+  {
+    "id": "06-ben-amy-split-no-merchant",
+    "photo": "receipts/case-06-ben-amy-split-no-merchant.jpg",
+    "note": "BenTest 垫付，BenTest 和 AmyTest 平分。",
+    "uploader_id": "BenTest",
+    "members": ["AmyTest", "BenTest"],
+    "expected": "expected-case-06.json"
+  },
+  {
+    "id": "07-cindy-amy-multi-page",
+    "photos": [
+      "receipts/case-07-cindy-amy-multi-page-01.jpg",
+      "receipts/case-07-cindy-amy-multi-page-02.jpg",
+      "receipts/case-07-cindy-amy-multi-page-03.jpg"
+    ],
+    "note": "CindyTest 垫付，CindyTest 和 AmyTest 平分。",
+    "uploader_id": "CindyTest",
+    "members": ["CindyTest", "AmyTest"],
+    "expected": "expected-case-07.json"
   }
 ]

@@ -91,7 +91,15 @@ def _parse_members(raw: str) -> list[str]:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Extract an editable receipt expense draft.")
-    parser.add_argument("photo", type=Path, help="local JPG or PNG receipt")
+    parser.add_argument("photo", type=Path, nargs="?", help="local JPG or PNG receipt")
+    parser.add_argument(
+        "--photo",
+        dest="extra_photos",
+        type=Path,
+        action="append",
+        default=[],
+        help="receipt image; repeat for a multi-image receipt",
+    )
     parser.add_argument("--note", required=True, help="split instruction shown with the receipt")
     parser.add_argument("--uploader", required=True, help="uploader/member ID used for 'I/me'")
     parser.add_argument("--members", required=True, type=_parse_members, help="comma-separated member IDs")
@@ -112,11 +120,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    photos = ([args.photo] if args.photo is not None else []) + args.extra_photos
+    if not photos:
+        parser.error("provide a receipt image as a positional argument or with --photo")
     artifacts = _output_dir(args.runs_dir, args.output_dir)
     metadata = {
         "started_at": datetime.now(UTC).isoformat(),
-        "photo": str(args.photo),
+        "photos": [str(photo) for photo in photos],
         "note": args.note,
         "uploader_id": args.uploader,
         "members": args.members,
@@ -127,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     try:
         draft, raw_response = extract_expense(
-            args.photo, args.note, args.uploader, args.members, model=args.model
+            photos, args.note, args.uploader, args.members, model=args.model
         )
     except Exception as error:
         elapsed_ms = round((time.perf_counter() - started) * 1000)

@@ -81,6 +81,36 @@ def test_invalid_photo_creates_diagnostic_artifact(tmp_path: Path):
     assert json.loads(errors[0].read_text())["error_type"] == "FileNotFoundError"
 
 
+def test_repeated_photo_option_passes_ordered_images_to_extractor(monkeypatch, tmp_path: Path):
+    first = tmp_path / "first.jpg"
+    second = tmp_path / "second.jpg"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    seen: dict[str, object] = {}
+
+    def extractor(photos, *_args, **_kwargs):
+        seen["photos"] = photos
+        return ExpenseDraft(
+            receipt_date="2026-11-17",
+            total_cents=100,
+            subtotal_cents=100,
+            payer_id="CindyTest",
+            remainder_member_ids=["CindyTest"],
+        ), {"response_id": "test"}
+
+    monkeypatch.setattr("receipt_split.cli.extract_expense", extractor)
+    artifact_root = tmp_path / "artifacts"
+    status = main([
+        "--photo", str(first), "--photo", str(second), "--note", "split equally",
+        "--uploader", "CindyTest", "--members", "CindyTest", "--runs-dir", str(artifact_root),
+    ])
+
+    assert status == 0
+    assert seen["photos"] == [first, second]
+    run = next(artifact_root.glob("*/run.json"))
+    assert json.loads(run.read_text())["photos"] == [str(first), str(second)]
+
+
 def test_expense_draft_rejects_non_iso_date():
     for invalid_date in ("01/01/2026", "20260101"):
         try:
@@ -104,5 +134,3 @@ def test_case_four_expected_draft_matches_the_menu_assignment():
     ]
     assert draft.remainder_member_ids == []
     assert calculate_shares(draft) == {"AmyTest": 1_685, "BenTest": 1_551, "CindyTest": 8_091}
-
-

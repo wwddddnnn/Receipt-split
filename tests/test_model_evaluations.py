@@ -21,9 +21,18 @@ def test_model_evaluation_case(case: dict[str, object], pytestconfig: pytest.Con
     """Run one selected fixture and retain exactly that fixture's API artifacts."""
     root: Path = pytestconfig._pytest_run_root  # type: ignore[attr-defined]
     case_root = root / "cases" / str(case["id"])
+    photo_values = case.get("photos")
+    if photo_values is None:
+        photo_values = [case["photo"]]
+    assert isinstance(photo_values, list)
+    photo_arguments = [
+        value
+        for photo in photo_values
+        for value in ("--photo", str(EXAMPLES_ROOT / str(photo)))
+    ]
     status = main(
         [
-            str(EXAMPLES_ROOT / str(case["photo"])),
+            *photo_arguments,
             "--note",
             str(case["note"]),
             "--uploader",
