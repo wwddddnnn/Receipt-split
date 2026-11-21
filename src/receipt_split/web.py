@@ -27,6 +27,7 @@ from .ledger import (
     LedgerValidationError,
     ReceiptPhoto,
     ReceiptProvenance,
+    ReceiptStateError,
     ReceiptUpdateConflictError,
     SubmissionConflictError,
 )
@@ -443,6 +444,8 @@ def create_app() -> FastAPI:
                 )
         except ReceiptUpdateConflictError as error:
             raise ApiProblem(409, "receipt_update_conflict", "This receipt was changed by someone else. Reload it before saving.") from error
+        except ReceiptStateError as error:
+            raise ApiProblem(409, "receipt_state_conflict", "A confirmed receipt cannot be saved as a draft.") from error
         except LookupError as error:
             raise ApiProblem(404, "receipt_not_found", "Receipt was not found.") from error
         except (LedgerValidationError, ValueError) as error:

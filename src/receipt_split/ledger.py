@@ -29,6 +29,10 @@ class ReceiptUpdateConflictError(ValueError):
     """Raised when a receipt was changed after the editor loaded it."""
 
 
+class ReceiptStateError(ValueError):
+    """Raised when an invalid receipt-status transition is requested."""
+
+
 class ReceiptPhoto(BaseModel):
     """One upload, retained in memory only until persisted to image storage."""
 
@@ -535,6 +539,8 @@ class Ledger:
                 raise LookupError("receipt does not exist")
             if row["version"] != version:
                 raise ReceiptUpdateConflictError("receipt was updated by someone else")
+            if not confirm and row["status"] != "pending":
+                raise ReceiptStateError("confirmed receipts cannot be saved as drafts")
             status = "confirmed" if confirm else "pending"
             content_hash = self._content_hash(confirmed_draft=draft.model_dump(mode="json"), note=note, photo_paths=json.loads(row["photo_paths_json"]), raw_model_response=json.loads(row["raw_model_response_json"]), uploader_id=row["uploader_id"], extractor_model=row["extractor_model"], prompt_version=row["prompt_version"], status=status, shares=shares)
             cursor = self.connection.execute(

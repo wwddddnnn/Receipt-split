@@ -12,6 +12,7 @@ const dirty = ref(false)
 const error = ref('')
 const preview = ref<Record<string, number>>({})
 const ruleMode = ref(true)
+const isPending = ref(false)
 const form = ref<ReceiptEdit>({ version: 1, receipt_date: '', total_cents: 0, payer_id: '', note: '', individual_charges: [], remainder_member_ids: [] })
 const receiptId = String(route.params.id)
 const totalDollars = computed({ get: () => form.value.total_cents == null ? '' : (form.value.total_cents / 100).toFixed(2), set: (value: string) => { form.value.total_cents = value === '' ? null : Math.round(Number(value) * 100) || null; dirty.value = true } })
@@ -49,6 +50,7 @@ onMounted(async () => {
     members.value = available.members
     form.value = { version: receipt.version, receipt_date: receipt.receipt_date ?? '', total_cents: receipt.total_cents ?? 0, payer_id: receipt.payer_id ?? '', note: receipt.note, individual_charges: receipt.individual_charges, remainder_member_ids: receipt.remainder_member_ids }
     ruleMode.value = receipt.rule_editable
+    isPending.value = receipt.status === 'pending'
     preview.value = receipt.shares
   } catch (caught) { error.value = (caught as ApiError).message }
   finally { loading.value = false }
@@ -85,8 +87,8 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('有未保存的修改�
       <p v-if="error" class="alert">{{ error }}</p>
       <section class="card"><h2>每人承担金额</h2><dl class="amount-list"><template v-for="(amount, member) in preview" :key="member"><dt>{{ member }}</dt><dd>{{ money(amount) }}</dd></template></dl></section>
       <button type="button" class="secondary" @click="refreshPreview">预览计算结果</button>
-      <button type="button" class="secondary" :disabled="saving" @click="save(false)">{{ saving ? '正在保存…' : '保存草稿' }}</button>
-      <button class="primary" :disabled="saving">{{ saving ? '正在确认…' : '确认入账' }}</button>
+      <button v-if="isPending" type="button" class="secondary" :disabled="saving" @click="save(false)">{{ saving ? '正在保存…' : '保存草稿' }}</button>
+      <button class="primary" :disabled="saving">{{ saving ? (isPending ? '正在确认…' : '正在保存…') : (isPending ? '确认入账' : '保存修改') }}</button>
       <button type="button" class="text-link" @click="cancel">取消</button>
     </form>
   </section>

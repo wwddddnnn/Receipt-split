@@ -124,6 +124,23 @@ def test_receipt_can_store_ordered_paths_for_multiple_images(ledger: Ledger):
     ] == [PHOTO_BYTES, SECOND_PHOTO_BYTES]
 
 
+def test_editing_date_moves_receipt_between_monthly_settlements(ledger: Ledger):
+    original = ledger.confirm_receipt(
+        _case_two_draft(), note="original", submission_id="move-month", provenance=_provenance(_case_two_draft())
+    )
+    assert ledger.monthly_settlement("2026-02").balances_cents["CindyTest"] == 4_452
+
+    edited = Ledger.edit_draft(
+        receipt_date="2026-03-01", total_cents=6_000, payer_id="AmyTest",
+        individual_charges=[{"member_id": "AmyTest", "amount_cents": 1_000}],
+        remainder_member_ids=["BenTest"],
+    )
+    ledger.update_receipt(original.receipt_id, version=original.version, draft=edited, note="moved", updated_by="CindyTest", confirm=True)
+
+    assert ledger.monthly_settlement("2026-02").balances_cents == {"AmyTest": 0, "BenTest": 0, "CindyTest": 0}
+    assert ledger.monthly_settlement("2026-03").balances_cents == {"AmyTest": 5_000, "BenTest": -5_000, "CindyTest": 0}
+
+
 def test_legacy_blob_is_exported_and_replaced_with_path_list(tmp_path: Path):
     database_path = tmp_path / "legacy.sqlite"
     database = sqlite3.connect(database_path)

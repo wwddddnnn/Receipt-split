@@ -173,11 +173,14 @@ def test_receipt_edit_recalculates_shares_and_rejects_stale_version(monkeypatch,
 
 def test_receipt_edit_can_save_incomplete_draft_before_confirmation(monkeypatch, tmp_path: Path):
     def extractor(*_args, **_kwargs):
-        return _complete_draft(), {"response_id": "draft-edit"}
+        draft = _complete_draft()
+        draft.needs_clarification = [Clarification(field="total_cents", reason="The total is unclear.")]
+        return draft, {"response_id": "draft-edit"}
 
     with _client(monkeypatch, tmp_path, extractor) as client:
         _login(client)
         original = _submission(client).json()
+        assert original["status"] == "pending"
         draft = client.put(f"/receipts/{original['receipt_id']}/draft", json={
             "version": original["version"], "receipt_date": None, "total_cents": None,
             "payer_id": None, "note": "come back later", "individual_charges": [], "remainder_member_ids": [],
@@ -185,3 +188,18 @@ def test_receipt_edit_can_save_incomplete_draft_before_confirmation(monkeypatch,
         assert draft.status_code == 200
         assert draft.json()["status"] == "pending"
         assert {item["field"] for item in draft.json()["needs_clarification"]} >= {"receipt_date", "total_cents", "payer_id"}
+
+
+def test_confirmed_receipt_cannot_be_saved_as_draft(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        return _complete_draft(), {"response_id": "state-test"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
+        original = _submission(client).json()
+        response = client.put(f"/receipts/{original['receipt_id']}/draft", json={
+            "version": original["version"], "receipt_date": None, "total_cents": None,
+            "payer_id": None, "note": "", "individual_charges": [], "remainder_member_ids": [],
+        })
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "receipt_state_conflict"
