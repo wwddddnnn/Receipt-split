@@ -90,6 +90,7 @@ class ReceiptEditRequest(BaseModel):
     version: int = Field(ge=1)
     receipt_date: str | None = None
     total_cents: int | None = Field(default=None, gt=0)
+    subtotal_cents: int | None = Field(default=None, gt=0)
     payer_id: str | None = None
     note: str = ""
     individual_charges: list[IndividualCharge] = Field(default_factory=list)
@@ -207,6 +208,7 @@ def _edit_draft(payload: ReceiptEditRequest):
     return Ledger.edit_draft(
         receipt_date=payload.receipt_date,
         total_cents=payload.total_cents,
+        subtotal_cents=payload.subtotal_cents,
         payer_id=payload.payer_id,
         individual_charges=[charge.model_dump() for charge in payload.individual_charges],
         remainder_member_ids=payload.remainder_member_ids,

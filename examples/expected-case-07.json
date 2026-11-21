@@ -1,0 +1,9 @@
+{
+  "receipt_date": "2026-11-15",
+  "total_cents": 17431,
+  "subtotal_cents": 16857,
+  "payer_id": "CindyTest",
+  "individual_charges": [],
+  "remainder_member_ids": ["CindyTest", "AmyTest"],
+  "needs_clarification": []
+}

@@ -131,7 +131,7 @@ def test_editing_date_moves_receipt_between_monthly_settlements(ledger: Ledger):
     assert ledger.monthly_settlement("2026-02").balances_cents["CindyTest"] == 4_452
 
     edited = Ledger.edit_draft(
-        receipt_date="2026-03-01", total_cents=6_000, payer_id="AmyTest",
+        receipt_date="2026-03-01", total_cents=6_000, subtotal_cents=6_000, payer_id="AmyTest",
         individual_charges=[{"member_id": "AmyTest", "amount_cents": 1_000}],
         remainder_member_ids=["BenTest"],
     )

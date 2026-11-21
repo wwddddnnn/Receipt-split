@@ -25,9 +25,8 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="page">
-    <div class="eyebrow">月结</div>
-    <h1>谁该收，谁该付。</h1>
+  <section class="page settlement-page">
+    <h1>月结</h1>
     <form class="month-picker" @submit.prevent="load">
       <input v-model="month" type="month" required aria-label="结算月份" />
       <button class="secondary" :disabled="loading">{{ loading ? '载入中…' : '查看' }}</button>
@@ -40,11 +39,11 @@ onMounted(load)
       </label>
       <label>
         <input v-model="strategy" type="radio" value="receipt_links" @change="load" />
-        <span><b>按收据关系</b><small>只在同一对成员间抵销，保留谁欠谁。</small></span>
+        <span><b>按收据关系</b><small>只在同一对成员间抵销。</small></span>
       </label>
     </fieldset>
     <p v-if="error" class="alert">{{ error }}</p>
-    <template v-else-if="settlement">
+    <div v-else-if="settlement" class="settlement-results">
       <section class="card">
         <h2>相关成员的净余额</h2>
         <p class="hint">本月转账关系树中的成员。正数为应收，负数为应付。</p>
@@ -68,7 +67,7 @@ onMounted(load)
         </ul>
         <p v-else class="hint">这个月暂时没有需要结算的款项。</p>
       </section>
-    </template>
+    </div>
     <p v-else class="loading">正在载入月结…</p>
   </section>
 </template>

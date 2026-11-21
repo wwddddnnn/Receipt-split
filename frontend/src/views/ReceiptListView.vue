@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
-import { getReceipts, money, type ReceiptList } from '@/api'
+import { RouterLink, useRouter } from 'vue-router'
+import { getReceipts, money, type ReceiptList, type ReceiptListItem } from '@/api'
 
 const month = ref('')
 const status = ref<'' | 'confirmed' | 'pending'>('')
 const result = ref<ReceiptList>()
 const loading = ref(false)
 const error = ref('')
+const router = useRouter()
+
+function destinationFor(item: ReceiptListItem) {
+  return item.status === 'pending' ? `/receipt/${item.receipt_id}/edit` : `/receipt/${item.receipt_id}`
+}
+
+function openReceipt(item: ReceiptListItem) {
+  router.push(destinationFor(item))
+}
 
 async function load(page = 1) {
   loading.value = true; error.value = ''
@@ -21,9 +30,9 @@ onMounted(load)
 
 <template>
   <section class="page receipt-list-page">
-    <div class="eyebrow">账单</div><h1>你的账单记录。</h1>
+    <h1>账单</h1>
     <div class="list-filters">
-      <label><span>月份</span><input v-model="month" type="month" /></label>
+      <label class="month-filter"><span>月份</span><input v-model="month" :class="{ 'month-empty': !month }" type="month" /></label>
       <label><span>状态</span><select v-model="status"><option value="">全部状态</option><option value="confirmed">已入账</option><option value="pending">待确认</option></select></label>
     </div>
     <p v-if="error" class="alert">{{ error }}</p>
@@ -31,7 +40,7 @@ onMounted(load)
     <template v-else-if="result">
       <p v-if="!result.items.length" class="empty-copy">没有符合筛选条件的账单。</p>
       <div v-else class="receipt-list-cards">
-        <RouterLink v-for="item in result.items" :key="item.receipt_id" class="receipt-list-card" :to="`/receipt/${item.receipt_id}`">
+        <RouterLink v-for="item in result.items" :key="item.receipt_id" class="receipt-list-card" :to="destinationFor(item)">
           <div><span class="status-pill" :class="item.status">{{ item.status === 'pending' ? '待确认' : '已入账' }}</span><span class="list-date">{{ item.receipt_date ?? '日期待确认' }}</span></div>
           <strong>{{ money(item.total_cents) }}</strong>
           <p>{{ item.payer_display_name ?? '垫付人待确认' }} 垫付 · {{ item.note_summary || '无备注' }}</p>
@@ -40,7 +49,7 @@ onMounted(load)
       </div>
       <table v-if="result.items.length" class="receipt-table">
         <thead><tr><th>日期</th><th>状态</th><th>垫付人</th><th>备注</th><th>金额</th></tr></thead>
-        <tbody><tr v-for="item in result.items" :key="item.receipt_id" tabindex="0" @click="$router.push(`/receipt/${item.receipt_id}`)" @keydown.enter="$router.push(`/receipt/${item.receipt_id}`)">
+        <tbody><tr v-for="item in result.items" :key="item.receipt_id" tabindex="0" @click="openReceipt(item)" @keydown.enter="openReceipt(item)" @keydown.space.prevent="openReceipt(item)">
           <td>{{ item.receipt_date ?? '待确认' }}</td><td><span class="status-pill" :class="item.status">{{ item.status === 'pending' ? '待确认' : '已入账' }}</span></td><td>{{ item.payer_display_name ?? '待确认' }}</td><td>{{ item.note_summary || '无备注' }}</td><td>{{ money(item.total_cents) }}</td>
         </tr></tbody>
       </table>

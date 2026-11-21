@@ -101,9 +101,8 @@ onBeforeUnmount(() => photos.value.forEach((photo) => URL.revokeObjectURL(photo.
 </script>
 
 <template>
-  <section class="page">
-    <div class="eyebrow">快速记账</div>
-    <h1>拍下收据，写一句怎么分。</h1>
+  <section class="page upload-page">
+    <h1>快速记账</h1>
     <p class="intro">识别成功后会直接入账。请先确认照片和备注无误。</p>
 
     <div v-if="error" class="alert" role="alert">
@@ -116,15 +115,15 @@ onBeforeUnmount(() => photos.value.forEach((photo) => URL.revokeObjectURL(photo.
     </div>
     <div v-if="loadingMembers" class="loading">正在载入成员名单…</div>
 
-    <form v-else class="form" @submit.prevent="submit">
-      <label>
+    <form v-else class="form upload-form" @submit.prevent="submit">
+      <label class="upload-payer">
         <span>垫付人</span>
         <select v-model="payerId" :disabled="submitting">
           <option v-for="member in members" :key="member.member_id" :value="member.member_id">{{ member.display_name }}</option>
         </select>
       </label>
 
-      <div>
+      <div class="upload-photos">
         <span class="label">收据照片</span>
         <div class="upload-options">
           <label class="upload-area">
@@ -147,16 +146,18 @@ onBeforeUnmount(() => photos.value.forEach((photo) => URL.revokeObjectURL(photo.
         </div>
       </div>
 
-      <label>
+      <label class="upload-note">
         <span>备注</span>
         <textarea v-model="note" rows="4" maxlength="500" :disabled="submitting" placeholder="例如：我垫付，我、BenTest 和 CindyTest 平摊。"></textarea>
         <small>“我”始终指当前登录成员；垫付人可单独选择。</small>
       </label>
 
-      <button class="primary" type="submit" :disabled="!canSubmit">
-        {{ submitting ? '正在识别并入账…' : '提交并自动入账' }}
-      </button>
-      <p class="form-note">识别不完整时不会写入账本，照片和备注会保留在本页以便重试。</p>
+      <div class="upload-actions">
+        <button class="primary" type="submit" :disabled="!canSubmit">
+          {{ submitting ? '正在识别并入账…' : '提交并自动入账' }}
+        </button>
+        <p class="form-note">识别不完整时不会写入账本，照片和备注会保留在本页以便重试。</p>
+      </div>
     </form>
   </section>
 </template>
