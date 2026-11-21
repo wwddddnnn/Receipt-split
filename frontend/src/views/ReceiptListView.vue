@@ -38,6 +38,12 @@ onMounted(load)
           <small v-if="item.status === 'pending'">{{ item.clarification_count ? `${item.clarification_count} 项待确认` : '待补充分账信息' }}</small>
         </RouterLink>
       </div>
+      <table v-if="result.items.length" class="receipt-table">
+        <thead><tr><th>日期</th><th>状态</th><th>垫付人</th><th>备注</th><th>金额</th></tr></thead>
+        <tbody><tr v-for="item in result.items" :key="item.receipt_id" tabindex="0" @click="$router.push(`/receipt/${item.receipt_id}`)" @keydown.enter="$router.push(`/receipt/${item.receipt_id}`)">
+          <td>{{ item.receipt_date ?? '待确认' }}</td><td><span class="status-pill" :class="item.status">{{ item.status === 'pending' ? '待确认' : '已入账' }}</span></td><td>{{ item.payer_display_name ?? '待确认' }}</td><td>{{ item.note_summary || '无备注' }}</td><td>{{ money(item.total_cents) }}</td>
+        </tr></tbody>
+      </table>
       <nav v-if="result.total > result.page_size" class="pagination" aria-label="账单分页">
         <button class="secondary" :disabled="loading || result.page === 1" @click="load(result.page - 1)">上一页</button>
         <span>第 {{ result.page }} 页 / 共 {{ Math.ceil(result.total / result.page_size) }} 页</span>

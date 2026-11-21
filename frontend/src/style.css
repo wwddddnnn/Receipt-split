@@ -11,6 +11,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .text-link { color: #176b55; font-size: .95rem; font-weight: 700; }
 .topnav { display: flex; gap: 16px; }
 .list-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 540px; }.receipt-list-cards { display: grid; gap: 10px; margin-top: 20px; }.receipt-list-card { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; padding: 15px; border: 1px solid #dde6e0; border-radius: 15px; background: #fff; color: inherit; text-decoration: none; box-shadow: 0 2px 10px rgba(24,49,42,.04); }.receipt-list-card > div { display: flex; gap: 8px; align-items: center; }.receipt-list-card strong { font-variant-numeric: tabular-nums; }.receipt-list-card p { grid-column: 1 / -1; margin: 0; color: #567066; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.receipt-list-card small { grid-column: 1 / -1; color: #96641c; }.list-date { color: #6d7c74; font-size: .84rem; }.pagination { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 20px; font-size: .86rem; }
+.receipt-table { display: none; }
 .page { animation: appear .22s ease-out; }
 .eyebrow { color: #5d665f; font-size: .78rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .eyebrow.success { color: #176b55; }
@@ -92,6 +93,7 @@ figure img, .receipt-photos img { display: block; width: 100%; height: 100%; obj
   .settlement-results .card { min-height: 100%; margin-top: 0; }
 
   .receipt-detail-page { max-width: 1120px; margin: 0 auto; }
+  .receipt-list-page { max-width: 1060px; margin: 0 auto; }.receipt-list-cards { display: none; }.receipt-table { display: table; width: 100%; margin-top: 24px; border-collapse: collapse; overflow: hidden; border: 1px solid #dce5df; border-radius: 16px; background: #fff; }.receipt-table th, .receipt-table td { padding: 14px 16px; border-bottom: 1px solid #e8eeea; text-align: left; }.receipt-table th { color: #5f7168; font-size: .8rem; }.receipt-table tr { cursor: pointer; }.receipt-table tbody tr:hover { background: #f2f8f4; }.receipt-table td:last-child { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
   .receipt-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "status amount" "title amount" "intro amount"; column-gap: 36px; align-items: end; padding-bottom: 22px; }
   .receipt-hero .status-line { grid-area: status; }
   .receipt-hero h1 { grid-area: title; margin-bottom: 8px; }
