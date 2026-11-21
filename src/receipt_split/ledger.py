@@ -13,7 +13,7 @@ from typing import Any, Iterator, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from .models import ExpenseDraft
+from .models import Clarification, ExpenseDraft
 from .splitting import calculate_shares
 
 
@@ -493,7 +493,7 @@ class Ledger:
         )
 
     @staticmethod
-    def edit_draft(*, receipt_date: str, total_cents: int, payer_id: str, individual_charges: list[dict[str, Any]], remainder_member_ids: list[str]) -> ExpenseDraft:
+    def edit_draft(*, receipt_date: str | None, total_cents: int | None, payer_id: str | None, individual_charges: list[dict[str, Any]], remainder_member_ids: list[str]) -> ExpenseDraft:
         return ExpenseDraft(receipt_date=receipt_date, total_cents=total_cents, subtotal_cents=total_cents, payer_id=payer_id, individual_charges=individual_charges, remainder_member_ids=remainder_member_ids)
 
     def preview_edit(self, draft: ExpenseDraft, member_ids: set[str]) -> dict[str, int]:
@@ -506,13 +506,28 @@ class Ledger:
         except ValueError as error:
             raise LedgerValidationError(str(error)) from error
 
-    def update_receipt(self, receipt_id: int, *, version: int, draft: ExpenseDraft, note: str, updated_by: str) -> ConfirmedReceipt:
-        if not note.strip():
-            raise LedgerValidationError("note must not be empty")
-        if any(value is None for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id)):
-            raise LedgerValidationError("date, total, and payer must be provided")
+    def update_receipt(self, receipt_id: int, *, version: int, draft: ExpenseDraft, note: str, updated_by: str, confirm: bool) -> ConfirmedReceipt:
         members = {row["member_id"] for row in self.connection.execute("SELECT member_id FROM members")}
-        shares = self.preview_edit(draft, members)
+        involved = {draft.payer_id, *draft.remainder_member_ids, *(charge.member_id for charge in draft.individual_charges)}
+        unknown = sorted(member_id for member_id in involved if member_id and member_id not in members)
+        if unknown:
+            raise LedgerValidationError(f"members are not in the ledger: {', '.join(unknown)}")
+        shares: dict[str, int] = {}
+        if confirm:
+            if not note.strip():
+                raise LedgerValidationError("note must not be empty")
+            if any(value is None for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id)):
+                raise LedgerValidationError("date, total, and payer must be provided")
+            shares = self.preview_edit(draft, members)
+            draft.needs_clarification = []
+        else:
+            clarifications = []
+            for field, value in (("receipt_date", draft.receipt_date), ("total_cents", draft.total_cents), ("payer_id", draft.payer_id)):
+                if value is None:
+                    clarifications.append({"field": field, "reason": "Please provide this field before confirming."})
+            if not clarifications and not draft.individual_charges and not draft.remainder_member_ids:
+                clarifications.append({"field": "split", "reason": "Choose a split rule before confirming."})
+            draft.needs_clarification = [Clarification(**item) for item in clarifications]
         timestamp = datetime.now(UTC).isoformat()
         with self._transaction():
             row = self.connection.execute("SELECT * FROM receipts WHERE receipt_id = ?", (receipt_id,)).fetchone()
@@ -520,10 +535,11 @@ class Ledger:
                 raise LookupError("receipt does not exist")
             if row["version"] != version:
                 raise ReceiptUpdateConflictError("receipt was updated by someone else")
-            content_hash = self._content_hash(confirmed_draft=draft.model_dump(mode="json"), note=note, photo_paths=json.loads(row["photo_paths_json"]), raw_model_response=json.loads(row["raw_model_response_json"]), uploader_id=row["uploader_id"], extractor_model=row["extractor_model"], prompt_version=row["prompt_version"], status="confirmed", shares=shares)
+            status = "confirmed" if confirm else "pending"
+            content_hash = self._content_hash(confirmed_draft=draft.model_dump(mode="json"), note=note, photo_paths=json.loads(row["photo_paths_json"]), raw_model_response=json.loads(row["raw_model_response_json"]), uploader_id=row["uploader_id"], extractor_model=row["extractor_model"], prompt_version=row["prompt_version"], status=status, shares=shares)
             cursor = self.connection.execute(
-                """UPDATE receipts SET status='confirmed', receipt_date=?, total_cents=?, subtotal_cents=?, payer_id=?, note=?, confirmed_draft_json=?, content_hash=?, confirmed_at=COALESCE(confirmed_at, ?), updated_by=?, updated_at=?, version=version+1 WHERE receipt_id=? AND version=?""",
-                (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id, note, _compact_json(draft.model_dump(mode="json")), content_hash, timestamp, updated_by, timestamp, receipt_id, version),
+                """UPDATE receipts SET status=?, receipt_date=?, total_cents=?, subtotal_cents=?, payer_id=?, note=?, confirmed_draft_json=?, content_hash=?, confirmed_at=?, updated_by=?, updated_at=?, version=version+1 WHERE receipt_id=? AND version=?""",
+                (status, draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id, note, _compact_json(draft.model_dump(mode="json")), content_hash, timestamp if confirm else None, updated_by, timestamp, receipt_id, version),
             )
             if cursor.rowcount != 1:
                 raise ReceiptUpdateConflictError("receipt was updated by someone else")

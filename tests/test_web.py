@@ -169,3 +169,19 @@ def test_receipt_edit_recalculates_shares_and_rejects_stale_version(monkeypatch,
         assert saved.json()["shares"] == {"AmyTest": 1000, "BenTest": 5000}
         assert saved.json()["version"] == original["version"] + 1
         assert client.put(f"/receipts/{original['receipt_id']}", json=payload).status_code == 409
+
+
+def test_receipt_edit_can_save_incomplete_draft_before_confirmation(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        return _complete_draft(), {"response_id": "draft-edit"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
+        original = _submission(client).json()
+        draft = client.put(f"/receipts/{original['receipt_id']}/draft", json={
+            "version": original["version"], "receipt_date": None, "total_cents": None,
+            "payer_id": None, "note": "come back later", "individual_charges": [], "remainder_member_ids": [],
+        })
+        assert draft.status_code == 200
+        assert draft.json()["status"] == "pending"
+        assert {item["field"] for item in draft.json()["needs_clarification"]} >= {"receipt_date", "total_cents", "payer_id"}

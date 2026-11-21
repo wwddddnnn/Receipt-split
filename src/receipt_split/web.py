@@ -86,10 +86,10 @@ class ReceiptResponse(BaseModel):
 
 class ReceiptEditRequest(BaseModel):
     version: int = Field(ge=1)
-    receipt_date: str
-    total_cents: int = Field(gt=0)
-    payer_id: str
-    note: str
+    receipt_date: str | None = None
+    total_cents: int | None = Field(default=None, gt=0)
+    payer_id: str | None = None
+    note: str = ""
     individual_charges: list[IndividualCharge] = Field(default_factory=list)
     remainder_member_ids: list[str] = Field(default_factory=list)
 
@@ -430,8 +430,7 @@ def create_app() -> FastAPI:
         except (LedgerValidationError, ValueError) as error:
             raise ApiProblem(422, "invalid_receipt", str(error)) from error
 
-    @app.put("/receipts/{receipt_id}", response_model=ReceiptResponse, tags=["receipts"])
-    def update_receipt(receipt_id: int, payload: ReceiptEditRequest, request: Request) -> ReceiptResponse:
+    def _save_receipt_edit(receipt_id: int, payload: ReceiptEditRequest, request: Request, *, confirm: bool) -> ReceiptResponse:
         member = _current_member(request)
         with AuthStore(_database_path()) as store:
             if not store.can_access_receipt(member.member_id, receipt_id):
@@ -440,7 +439,7 @@ def create_app() -> FastAPI:
             with _open_ledger() as ledger:
                 receipt = ledger.update_receipt(
                     receipt_id, version=payload.version, draft=_edit_draft(payload),
-                    note=payload.note, updated_by=member.member_id,
+                    note=payload.note, updated_by=member.member_id, confirm=confirm,
                 )
         except ReceiptUpdateConflictError as error:
             raise ApiProblem(409, "receipt_update_conflict", "This receipt was changed by someone else. Reload it before saving.") from error
@@ -449,6 +448,14 @@ def create_app() -> FastAPI:
         except (LedgerValidationError, ValueError) as error:
             raise ApiProblem(422, "invalid_receipt", str(error)) from error
         return _receipt_response(receipt)
+
+    @app.put("/receipts/{receipt_id}", response_model=ReceiptResponse, tags=["receipts"])
+    def confirm_receipt_edit(receipt_id: int, payload: ReceiptEditRequest, request: Request) -> ReceiptResponse:
+        return _save_receipt_edit(receipt_id, payload, request, confirm=True)
+
+    @app.put("/receipts/{receipt_id}/draft", response_model=ReceiptResponse, tags=["receipts"])
+    def save_receipt_draft(receipt_id: int, payload: ReceiptEditRequest, request: Request) -> ReceiptResponse:
+        return _save_receipt_edit(receipt_id, payload, request, confirm=False)
 
     @app.get("/receipts/{receipt_id}/photos/{photo_index}", tags=["receipts"])
     def get_receipt_photo(receipt_id: int, photo_index: int, request: Request) -> FileResponse:

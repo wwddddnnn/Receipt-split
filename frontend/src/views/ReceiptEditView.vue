@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import { getMembers, getReceipt, money, previewReceipt, updateReceipt, type ApiError, type Member, type ReceiptEdit } from '@/api'
+import { getMembers, getReceipt, money, previewReceipt, saveReceiptDraft, updateReceipt, type ApiError, type Member, type ReceiptEdit } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,10 +14,10 @@ const preview = ref<Record<string, number>>({})
 const ruleMode = ref(true)
 const form = ref<ReceiptEdit>({ version: 1, receipt_date: '', total_cents: 0, payer_id: '', note: '', individual_charges: [], remainder_member_ids: [] })
 const receiptId = String(route.params.id)
-const totalDollars = computed({ get: () => (form.value.total_cents / 100).toFixed(2), set: (value: string) => { form.value.total_cents = Math.round(Number(value) * 100) || 0; dirty.value = true } })
+const totalDollars = computed({ get: () => form.value.total_cents == null ? '' : (form.value.total_cents / 100).toFixed(2), set: (value: string) => { form.value.total_cents = value === '' ? null : Math.round(Number(value) * 100) || null; dirty.value = true } })
 
 function markDirty() { dirty.value = true }
-function payload(): ReceiptEdit { return { ...form.value, individual_charges: form.value.individual_charges.filter((item) => item.member_id && item.amount_cents > 0), remainder_member_ids: [...form.value.remainder_member_ids] } }
+function payload(): ReceiptEdit { return { ...form.value, receipt_date: form.value.receipt_date || null, payer_id: form.value.payer_id || null, individual_charges: form.value.individual_charges.filter((item) => item.member_id && item.amount_cents > 0), remainder_member_ids: [...form.value.remainder_member_ids] } }
 function cents(value: string) { return Math.round(Number(value) * 100) || 0 }
 function setCharge(index: number, value: string) { form.value.individual_charges[index].amount_cents = cents(value); markDirty() }
 function setChargeEvent(index: number, event: Event) { setCharge(index, (event.target as HTMLInputElement).value) }
@@ -30,10 +30,10 @@ async function refreshPreview() {
   try { preview.value = await previewReceipt(receiptId, payload()) }
   catch (caught) { error.value = (caught as ApiError).message }
 }
-async function save() {
+async function save(confirm: boolean) {
   saving.value = true; error.value = ''
   try {
-    const saved = await updateReceipt(receiptId, payload())
+    const saved = confirm ? await updateReceipt(receiptId, payload()) : await saveReceiptDraft(receiptId, payload())
     dirty.value = false
     await router.replace(`/receipt/${saved.receipt_id}`)
   } catch (caught) {
@@ -61,10 +61,10 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('有未保存的修改�
   <section class="page">
     <div class="eyebrow">编辑账单</div><h1>修改分账规则。</h1>
     <p v-if="loading" class="loading">正在载入账单…</p>
-    <form v-else class="form" @submit.prevent="save">
-      <label><span>日期</span><input v-model="form.receipt_date" type="date" required @change="markDirty" /></label>
-      <label><span>实付总额（CAD）</span><input v-model="totalDollars" type="number" min="0.01" step="0.01" required /></label>
-      <label><span>垫付人</span><select v-model="form.payer_id" required @change="markDirty"><option v-for="member in members" :key="member.member_id" :value="member.member_id">{{ member.display_name }}</option></select></label>
+    <form v-else class="form" @submit.prevent="save(true)">
+      <label><span>日期</span><input v-model="form.receipt_date" type="date" @change="markDirty" /></label>
+      <label><span>实付总额（CAD）</span><input v-model="totalDollars" type="number" min="0.01" step="0.01" /></label>
+      <label><span>垫付人</span><select v-model="form.payer_id" @change="markDirty"><option value="">未选择</option><option v-for="member in members" :key="member.member_id" :value="member.member_id">{{ member.display_name }}</option></select></label>
       <label><span>备注</span><textarea v-model="form.note" rows="3" required @input="markDirty" /></label>
       <section class="card">
         <h2>分账规则</h2>
@@ -85,7 +85,8 @@ onBeforeRouteLeave(() => !dirty.value || window.confirm('有未保存的修改�
       <p v-if="error" class="alert">{{ error }}</p>
       <section class="card"><h2>每人承担金额</h2><dl class="amount-list"><template v-for="(amount, member) in preview" :key="member"><dt>{{ member }}</dt><dd>{{ money(amount) }}</dd></template></dl></section>
       <button type="button" class="secondary" @click="refreshPreview">预览计算结果</button>
-      <button class="primary" :disabled="saving">{{ saving ? '正在保存…' : '保存修改' }}</button>
+      <button type="button" class="secondary" :disabled="saving" @click="save(false)">{{ saving ? '正在保存…' : '保存草稿' }}</button>
+      <button class="primary" :disabled="saving">{{ saving ? '正在确认…' : '确认入账' }}</button>
       <button type="button" class="text-link" @click="cancel">取消</button>
     </form>
   </section>
