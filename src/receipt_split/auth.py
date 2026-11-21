@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256, scrypt
 import base64
 import hmac
+import json
 import os
 from pathlib import Path
 import secrets
@@ -192,26 +193,49 @@ class AuthStore:
         )]
 
     def can_access_receipt(self, member_id: str, receipt_id: int) -> bool:
-        return self.connection.execute(
+        row = self.connection.execute(
             """
-            SELECT 1 FROM receipts r WHERE r.receipt_id = ? AND (
-                r.created_by = ? OR r.uploader_id = ? OR r.payer_id = ? OR EXISTS (
-                    SELECT 1 FROM receipt_shares s WHERE s.receipt_id = r.receipt_id AND s.member_id = ?
-                )
-            )
+            SELECT r.*, EXISTS(SELECT 1 FROM receipt_shares s WHERE s.receipt_id = r.receipt_id AND s.member_id = ?) AS has_share
+            FROM receipts r WHERE r.receipt_id = ?
             """,
-            (receipt_id, member_id, member_id, member_id, member_id),
-        ).fetchone() is not None
+            (member_id, receipt_id),
+        ).fetchone()
+        return row is not None and self._row_is_participant(row, member_id)
+
+    @staticmethod
+    def _row_is_participant(row: sqlite3.Row, member_id: str) -> bool:
+        if member_id in {row["created_by"], row["uploader_id"], row["payer_id"]} or row["has_share"]:
+            return True
+        try:
+            draft = json.loads(row["confirmed_draft_json"])
+        except (TypeError, json.JSONDecodeError):
+            return False
+        return member_id in set(draft.get("remainder_member_ids", [])) | {
+            item.get("member_id") for item in draft.get("individual_charges", []) if isinstance(item, dict)
+        }
+
+    def accessible_receipt_rows(self, member_id: str, *, month: str | None = None, status: str | None = None) -> list[sqlite3.Row]:
+        conditions: list[str] = []
+        parameters: list[str] = []
+        if month is not None:
+            conditions.append("substr(r.receipt_date, 1, 7) = ?")
+            parameters.append(month)
+        if status is not None:
+            conditions.append("r.status = ?")
+            parameters.append(status)
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        rows = self.connection.execute(
+            """
+            SELECT r.*, EXISTS(SELECT 1 FROM receipt_shares s WHERE s.receipt_id = r.receipt_id AND s.member_id = ?) AS has_share,
+                   payer.display_name AS payer_display_name
+            FROM receipts r LEFT JOIN members payer ON payer.member_id = r.payer_id
+            """ + where + " ORDER BY r.receipt_date DESC, r.receipt_id DESC",
+            [member_id, *parameters],
+        ).fetchall()
+        return [row for row in rows if self._row_is_participant(row, member_id)]
 
     def accessible_receipt_ids(self, member_id: str) -> list[int]:
-        return [row["receipt_id"] for row in self.connection.execute(
-            """
-            SELECT r.receipt_id FROM receipts r WHERE r.created_by = ? OR r.uploader_id = ? OR r.payer_id = ?
-            OR EXISTS (SELECT 1 FROM receipt_shares s WHERE s.receipt_id = r.receipt_id AND s.member_id = ?)
-            ORDER BY r.receipt_date DESC, r.receipt_id DESC
-            """,
-            (member_id, member_id, member_id, member_id),
-        )]
+        return [row["receipt_id"] for row in self.accessible_receipt_rows(member_id)]
 
     def audit_receipt(self, receipt_id: int, member_id: str) -> None:
         self.connection.execute(

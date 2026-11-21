@@ -9,6 +9,7 @@ const router = createRouter({
   routes: [
     { path: '/login', component: () => import('./views/LoginView.vue') },
     { path: '/', component: () => import('./views/UploadView.vue') },
+    { path: '/receipts', component: () => import('./views/ReceiptListView.vue') },
     { path: '/receipt/:id', component: () => import('./views/ReceiptView.vue') },
     { path: '/receipt/:id/edit', component: () => import('./views/ReceiptEditView.vue') },
     { path: '/settlement', component: () => import('./views/SettlementView.vue') },

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 import logging
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ from tempfile import TemporaryDirectory
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, File, Form, Header, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, Header, Query, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -93,6 +94,25 @@ class ReceiptEditRequest(BaseModel):
     note: str = ""
     individual_charges: list[IndividualCharge] = Field(default_factory=list)
     remainder_member_ids: list[str] = Field(default_factory=list)
+
+
+class ReceiptListItem(BaseModel):
+    receipt_id: int
+    status: Literal["confirmed", "pending"]
+    receipt_date: str | None
+    total_cents: int | None
+    payer_id: str | None
+    payer_display_name: str | None
+    note_summary: str
+    updated_at: str | None
+    clarification_count: int = 0
+
+
+class ReceiptListResponse(BaseModel):
+    items: list[ReceiptListItem]
+    page: int
+    page_size: int
+    total: int
 
 
 class SettlementBalance(BaseModel):
@@ -296,13 +316,31 @@ def create_app() -> FastAPI:
         with AuthStore(_database_path()) as store:
             return MembersResponse(members=store.members())
 
-    @app.get("/receipts", response_model=list[ReceiptResponse], tags=["receipts"])
-    def list_receipts(request: Request) -> list[ReceiptResponse]:
+    @app.get("/receipts", response_model=ReceiptListResponse, tags=["receipts"])
+    def list_receipts(
+        request: Request,
+        month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+        status: Literal["confirmed", "pending"] | None = None,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+    ) -> ReceiptListResponse:
         member = _current_member(request)
         with AuthStore(_database_path()) as store:
-            receipt_ids = store.accessible_receipt_ids(member.member_id)
-        with _open_ledger() as ledger:
-            return [_receipt_response(ledger._get_receipt(receipt_id, created=False)) for receipt_id in receipt_ids]
+            rows = store.accessible_receipt_rows(member.member_id, month=month, status=status)
+        start = (page - 1) * page_size
+        items = []
+        for row in rows[start:start + page_size]:
+            try:
+                clarification_count = len(json.loads(row["confirmed_draft_json"]).get("needs_clarification", []))
+            except (TypeError, json.JSONDecodeError):
+                clarification_count = 0
+            items.append(ReceiptListItem(
+                receipt_id=row["receipt_id"], status=row["status"], receipt_date=row["receipt_date"],
+                total_cents=row["total_cents"], payer_id=row["payer_id"],
+                payer_display_name=row["payer_display_name"], note_summary=" ".join(row["note"].split())[:120],
+                updated_at=row["updated_at"], clarification_count=clarification_count,
+            ))
+        return ReceiptListResponse(items=items, page=page, page_size=page_size, total=len(rows))
 
     @app.post("/receipts", response_model=ReceiptResponse, tags=["receipts"])
     async def create_receipt(

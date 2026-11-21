@@ -32,6 +32,8 @@ export type Settlement = {
 }
 
 export type Member = { member_id: string; display_name: string }
+export type ReceiptListItem = { receipt_id: number; status: 'confirmed' | 'pending'; receipt_date: string | null; total_cents: number | null; payer_id: string | null; payer_display_name: string | null; note_summary: string; updated_at: string | null; clarification_count: number }
+export type ReceiptList = { items: ReceiptListItem[]; page: number; page_size: number; total: number }
 
 export type ApiError = Error & { code?: string; details?: unknown }
 
@@ -54,6 +56,13 @@ export const login = (member_id: string, password: string) => api<{ member: Memb
 })
 export const logout = () => api<void>('/auth/logout', { method: 'POST' })
 export const getReceipt = (id: string) => api<Receipt>(`/receipts/${encodeURIComponent(id)}`)
+export const getReceipts = (options: { month?: string; status?: 'confirmed' | 'pending'; page?: number; pageSize?: number } = {}) => {
+  const params = new URLSearchParams()
+  if (options.month) params.set('month', options.month)
+  if (options.status) params.set('status', options.status)
+  params.set('page', String(options.page ?? 1)); params.set('page_size', String(options.pageSize ?? 20))
+  return api<ReceiptList>(`/receipts?${params}`)
+}
 export type ReceiptEdit = { version: number; receipt_date: string | null; total_cents: number | null; payer_id: string | null; note: string; individual_charges: { member_id: string; amount_cents: number }[]; remainder_member_ids: string[] }
 export const previewReceipt = (id: string, payload: ReceiptEdit) => api<Record<string, number>>(`/receipts/${encodeURIComponent(id)}/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 export const updateReceipt = (id: string, payload: ReceiptEdit) => api<Receipt>(`/receipts/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })

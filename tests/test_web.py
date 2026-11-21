@@ -46,7 +46,7 @@ def _login(client: TestClient, member_id: str = "CindyTest"):
     return response
 
 
-def _submission(client: TestClient):
+def _submission(client: TestClient, submission_id: str = SUBMISSION_ID):
     return client.post(
         "/receipts",
         data={"payer_id": "CindyTest", "note": "AmyTest and BenTest split this."},
@@ -54,7 +54,7 @@ def _submission(client: TestClient):
             ("photos", ("page-1.png", PNG_ONE, "image/png")),
             ("photos", ("page-2.png", PNG_TWO, "image/png")),
         ],
-        headers={"Idempotency-Key": SUBMISSION_ID},
+        headers={"Idempotency-Key": submission_id},
     )
 
 
@@ -91,7 +91,7 @@ def test_receipt_upload_extracts_multiple_images_and_confirms(monkeypatch, tmp_p
 
         client.post("/auth/logout")
         _login(client, "DanTest")
-        assert client.get("/receipts").json() == []
+        assert client.get("/receipts").json()["items"] == []
         assert client.get(f"/receipts/{body['receipt_id']}").status_code == 404
         assert client.get(body["photo_urls"][0]).status_code == 404
 
@@ -203,3 +203,44 @@ def test_confirmed_receipt_cannot_be_saved_as_draft(monkeypatch, tmp_path: Path)
         })
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "receipt_state_conflict"
+
+
+def test_receipt_list_is_paginated_summary_and_respects_participants(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        return _complete_draft(), {"response_id": "list-test"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
+        first = _submission(client).json()
+        second = _submission(client, "0bd0c2a5-460a-432a-8cdd-a0d225738a74").json()
+        response = client.get("/receipts?month=2026-11&status=confirmed&page=1&page_size=1")
+        assert response.status_code == 200
+        page = response.json()
+        assert page["total"] == 2
+        assert page["items"][0]["receipt_id"] == second["receipt_id"]
+        assert set(page["items"][0]) == {"receipt_id", "status", "receipt_date", "total_cents", "payer_id", "payer_display_name", "note_summary", "updated_at", "clarification_count"}
+        assert "photo_urls" not in page["items"][0]
+        assert "shares" not in page["items"][0]
+
+        client.post("/auth/logout")
+        _login(client, "AmyTest")
+        assert client.get("/receipts").json()["total"] == 2
+        client.post("/auth/logout")
+        _login(client, "DanTest")
+        assert client.get("/receipts").json()["items"] == []
+
+
+def test_pending_draft_is_visible_to_named_draft_participant(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        draft = _complete_draft()
+        draft.needs_clarification = [Clarification(field="total_cents", reason="The total is unclear.")]
+        return draft, {"response_id": "pending-participant"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
+        _submission(client)
+        client.post("/auth/logout")
+        _login(client, "AmyTest")
+        page = client.get("/receipts?status=pending").json()
+        assert page["total"] == 1
+        assert page["items"][0]["status"] == "pending"
