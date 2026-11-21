@@ -11,6 +11,11 @@ export type Receipt = {
   created_by: string | null
   updated_by: string | null
   updated_at: string | null
+  version: number
+  individual_charges: { member_id: string; amount_cents: number }[]
+  remainder_member_ids: string[]
+  rule_editable: boolean
+  needs_clarification: { field: string; reason: string }[]
   photo_urls: string[]
   shares: Record<string, number>
   created: boolean
@@ -49,6 +54,9 @@ export const login = (member_id: string, password: string) => api<{ member: Memb
 })
 export const logout = () => api<void>('/auth/logout', { method: 'POST' })
 export const getReceipt = (id: string) => api<Receipt>(`/receipts/${encodeURIComponent(id)}`)
+export type ReceiptEdit = { version: number; receipt_date: string; total_cents: number; payer_id: string; note: string; individual_charges: { member_id: string; amount_cents: number }[]; remainder_member_ids: string[] }
+export const previewReceipt = (id: string, payload: ReceiptEdit) => api<Record<string, number>>(`/receipts/${encodeURIComponent(id)}/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+export const updateReceipt = (id: string, payload: ReceiptEdit) => api<Receipt>(`/receipts/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
 export const getSettlement = (month: string, strategy: Settlement['strategy']) =>
   api<Settlement>(`/settlements/${encodeURIComponent(month)}?strategy=${strategy}`)
 

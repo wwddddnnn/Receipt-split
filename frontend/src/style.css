@@ -40,7 +40,11 @@ figure img, .receipt-photos img { display: block; width: 100%; height: 100%; obj
 .amount-list dd { font-variant-numeric: tabular-nums; font-weight: 800; }
 .positive { color: #0d7a4e; }.negative { color: #a53b32; }
 .receipt-photos { display: flex; gap: 10px; max-height: 230px; overflow-x: auto; margin-bottom: 16px; scroll-snap-type: x mandatory; }
+.photo-button { width: min(76%, 240px); flex: 0 0 auto; padding: 0; border: 0; background: transparent; }
 .receipt-photos img { width: min(76%, 240px); flex: 0 0 auto; border-radius: 14px; scroll-snap-align: start; object-fit: contain; background: #e4eae6; }
+.photo-button img { width: 100%; }
+.photo-modal { position: fixed; inset: 0; z-index: 2; display: grid; place-items: center; gap: 12px; padding: 20px; background: rgba(0,0,0,.82); }.photo-modal img { max-width: 100%; max-height: 85vh; object-fit: contain; }.photo-close { justify-self: end; border: 0; border-radius: 8px; padding: 8px 12px; background: white; }
+.charge-row { display: grid; grid-template-columns: 1fr 110px auto; gap: 8px; margin: 8px 0; }.check-row { display: flex; align-items: center; gap: 8px; font-weight: 400; }
 .month-picker { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-bottom: 18px; }
 .strategy-picker { display: grid; gap: 8px; margin: 0 0 18px; padding: 0; border: 0; }.strategy-picker legend { margin-bottom: 8px; color: #31433d; font-size: .93rem; font-weight: 700; }.strategy-picker label { display: flex; grid-template-columns: none; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid #c6d1ca; border-radius: 12px; background: #fff; font-weight: 400; }.strategy-picker input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: #176b55; }.strategy-picker span { display: grid; gap: 2px; }.strategy-picker b { font-size: .92rem; }.strategy-picker small { font-size: .78rem; }
 .transfer-list { display: grid; gap: 13px; margin: 15px 0 0; padding: 0; list-style: none; }

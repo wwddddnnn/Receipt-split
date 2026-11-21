@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .extractor import DEFAULT_MODEL, PROMPT_VERSION, extract_expense
+from .models import IndividualCharge
 from .auth import AuthStore, MemberIdentity
 from .ledger import (
     ConfirmedReceipt,
@@ -26,6 +27,7 @@ from .ledger import (
     LedgerValidationError,
     ReceiptPhoto,
     ReceiptProvenance,
+    ReceiptUpdateConflictError,
     SubmissionConflictError,
 )
 
@@ -72,9 +74,24 @@ class ReceiptResponse(BaseModel):
     created_by: str | None = None
     updated_by: str | None = None
     updated_at: str | None = None
+    version: int
+    individual_charges: list[IndividualCharge]
+    remainder_member_ids: list[str]
+    rule_editable: bool
+    needs_clarification: list[dict[str, str]]
     photo_urls: list[str]
     shares: dict[str, int]
     created: bool
+
+
+class ReceiptEditRequest(BaseModel):
+    version: int = Field(ge=1)
+    receipt_date: str
+    total_cents: int = Field(gt=0)
+    payer_id: str
+    note: str
+    individual_charges: list[IndividualCharge] = Field(default_factory=list)
+    remainder_member_ids: list[str] = Field(default_factory=list)
 
 
 class SettlementBalance(BaseModel):
@@ -162,6 +179,16 @@ def _receipt_response(receipt: ConfirmedReceipt) -> ReceiptResponse:
         **receipt.model_dump(exclude={"photo_paths"}),
         **dict(row),
         photo_urls=[f"/receipts/{receipt.receipt_id}/photos/{index}" for index in range(len(receipt.photo_paths))],
+    )
+
+
+def _edit_draft(payload: ReceiptEditRequest):
+    return Ledger.edit_draft(
+        receipt_date=payload.receipt_date,
+        total_cents=payload.total_cents,
+        payer_id=payload.payer_id,
+        individual_charges=[charge.model_dump() for charge in payload.individual_charges],
+        remainder_member_ids=payload.remainder_member_ids,
     )
 
 
@@ -342,17 +369,6 @@ def create_app() -> FastAPI:
             clarification for clarification in draft.needs_clarification
             if clarification.field != "payer_id"
         ]
-        required_facts_missing = any(
-            value is None
-            for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents)
-        )
-        if required_facts_missing or draft.needs_clarification:
-            raise ApiProblem(
-                422,
-                "receipt_needs_clarification",
-                "The receipt cannot be automatically confirmed.",
-                details={"draft": draft.model_dump(mode="json")},
-            )
         try:
             with _open_ledger() as ledger:
                 receipt = ledger.confirm_receipt(
@@ -400,6 +416,38 @@ def create_app() -> FastAPI:
                 receipt = ledger._get_receipt(receipt_id, created=False)
         except LookupError as error:
             raise ApiProblem(404, "receipt_not_found", "Receipt was not found.") from error
+        return _receipt_response(receipt)
+
+    @app.post("/receipts/{receipt_id}/preview", response_model=dict[str, int], tags=["receipts"])
+    def preview_receipt_edit(receipt_id: int, payload: ReceiptEditRequest, request: Request) -> dict[str, int]:
+        member = _current_member(request)
+        with AuthStore(_database_path()) as store:
+            if not store.can_access_receipt(member.member_id, receipt_id):
+                raise ApiProblem(404, "receipt_not_found", "Receipt was not found.")
+        try:
+            with _open_ledger() as ledger:
+                return ledger.preview_edit(_edit_draft(payload), set(request.app.state.members))
+        except (LedgerValidationError, ValueError) as error:
+            raise ApiProblem(422, "invalid_receipt", str(error)) from error
+
+    @app.put("/receipts/{receipt_id}", response_model=ReceiptResponse, tags=["receipts"])
+    def update_receipt(receipt_id: int, payload: ReceiptEditRequest, request: Request) -> ReceiptResponse:
+        member = _current_member(request)
+        with AuthStore(_database_path()) as store:
+            if not store.can_access_receipt(member.member_id, receipt_id):
+                raise ApiProblem(404, "receipt_not_found", "Receipt was not found.")
+        try:
+            with _open_ledger() as ledger:
+                receipt = ledger.update_receipt(
+                    receipt_id, version=payload.version, draft=_edit_draft(payload),
+                    note=payload.note, updated_by=member.member_id,
+                )
+        except ReceiptUpdateConflictError as error:
+            raise ApiProblem(409, "receipt_update_conflict", "This receipt was changed by someone else. Reload it before saving.") from error
+        except LookupError as error:
+            raise ApiProblem(404, "receipt_not_found", "Receipt was not found.") from error
+        except (LedgerValidationError, ValueError) as error:
+            raise ApiProblem(422, "invalid_receipt", str(error)) from error
         return _receipt_response(receipt)
 
     @app.get("/receipts/{receipt_id}/photos/{photo_index}", tags=["receipts"])

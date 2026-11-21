@@ -25,6 +25,10 @@ class SubmissionConflictError(ValueError):
     """Raised when a submission ID is retried with different content."""
 
 
+class ReceiptUpdateConflictError(ValueError):
+    """Raised when a receipt was changed after the editor loaded it."""
+
+
 class ReceiptPhoto(BaseModel):
     """One upload, retained in memory only until persisted to image storage."""
 
@@ -62,6 +66,11 @@ class ConfirmedReceipt(BaseModel):
     note: str
     photo_paths: list[str]
     shares: dict[str, int]
+    individual_charges: list[dict[str, Any]] = Field(default_factory=list)
+    remainder_member_ids: list[str] = Field(default_factory=list)
+    rule_editable: bool = False
+    version: int = 1
+    needs_clarification: list[dict[str, str]] = Field(default_factory=list)
     created: bool
 
 
@@ -148,9 +157,23 @@ class Ledger:
         self.connection.execute("PRAGMA foreign_keys = ON")
         migrated_legacy_blobs = self._migrate_receipts_schema_if_needed()
         self.connection.executescript(SCHEMA)
+        self._ensure_edit_columns()
         if migrated_legacy_blobs:
             # Dropped BLOB pages remain in the SQLite file until VACUUM rewrites it.
             self.connection.execute("VACUUM")
+
+    def _ensure_edit_columns(self) -> None:
+        columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(receipts)")}
+        for name, definition in {
+            "created_by": "TEXT REFERENCES members(member_id)",
+            "updated_by": "TEXT REFERENCES members(member_id)",
+            "updated_at": "TEXT",
+            "version": "INTEGER NOT NULL DEFAULT 1",
+        }.items():
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE receipts ADD COLUMN {name} {definition}")
+        self.connection.execute("UPDATE receipts SET created_by = COALESCE(created_by, uploader_id), updated_by = COALESCE(updated_by, uploader_id), updated_at = COALESCE(updated_at, created_at), version = COALESCE(version, 1)")
+        self.connection.commit()
 
     def _migrate_receipts_schema_if_needed(self) -> bool:
         """Migrate legacy BLOB or verbose-path schemas to the minimal schema."""
@@ -168,7 +191,7 @@ class Ledger:
             "raw_model_response_json", "confirmed_draft_json", "extractor_model", "prompt_version",
             "created_at", "confirmed_at",
         }
-        if columns == required_columns:
+        if required_columns.issubset(columns) and "photo_bytes" not in columns:
             return False
         if "photo_bytes" not in columns and "photo_paths_json" not in columns:
             raise RuntimeError("receipts has an unsupported image-storage schema")
@@ -438,7 +461,7 @@ class Ledger:
         row = self.connection.execute(
             """
             SELECT receipt_id, status, receipt_date, total_cents, subtotal_cents, payer_id, uploader_id,
-                   note, submission_id, photo_paths_json
+                   note, submission_id, photo_paths_json, confirmed_draft_json, version
             FROM receipts WHERE receipt_id = ?
             """,
             (receipt_id,),
@@ -449,6 +472,12 @@ class Ledger:
             "SELECT member_id, amount_cents FROM receipt_shares WHERE receipt_id = ? ORDER BY member_id",
             (receipt_id,),
         ).fetchall()
+        try:
+            draft = ExpenseDraft.model_validate(json.loads(row["confirmed_draft_json"]))
+            rule_editable = bool(draft.individual_charges or draft.remainder_member_ids)
+        except Exception:
+            draft = ExpenseDraft()
+            rule_editable = False
         return ConfirmedReceipt(
             receipt_id=row["receipt_id"], submission_id=row["submission_id"], status=row["status"],
             receipt_date=row["receipt_date"], total_cents=row["total_cents"],
@@ -456,7 +485,51 @@ class Ledger:
             uploader_id=row["uploader_id"], note=row["note"],
             photo_paths=json.loads(row["photo_paths_json"]),
             shares={share["member_id"]: share["amount_cents"] for share in share_rows}, created=created,
+            individual_charges=[charge.model_dump() for charge in draft.individual_charges],
+            remainder_member_ids=draft.remainder_member_ids,
+            rule_editable=rule_editable,
+            version=row["version"] or 1,
+            needs_clarification=[item.model_dump() for item in draft.needs_clarification],
         )
+
+    @staticmethod
+    def edit_draft(*, receipt_date: str, total_cents: int, payer_id: str, individual_charges: list[dict[str, Any]], remainder_member_ids: list[str]) -> ExpenseDraft:
+        return ExpenseDraft(receipt_date=receipt_date, total_cents=total_cents, subtotal_cents=total_cents, payer_id=payer_id, individual_charges=individual_charges, remainder_member_ids=remainder_member_ids)
+
+    def preview_edit(self, draft: ExpenseDraft, member_ids: set[str]) -> dict[str, int]:
+        involved = {draft.payer_id, *draft.remainder_member_ids, *(charge.member_id for charge in draft.individual_charges)}
+        unknown = sorted(member_id for member_id in involved if member_id and member_id not in member_ids)
+        if unknown:
+            raise LedgerValidationError(f"members are not in the ledger: {', '.join(unknown)}")
+        try:
+            return calculate_shares(draft)
+        except ValueError as error:
+            raise LedgerValidationError(str(error)) from error
+
+    def update_receipt(self, receipt_id: int, *, version: int, draft: ExpenseDraft, note: str, updated_by: str) -> ConfirmedReceipt:
+        if not note.strip():
+            raise LedgerValidationError("note must not be empty")
+        if any(value is None for value in (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id)):
+            raise LedgerValidationError("date, total, and payer must be provided")
+        members = {row["member_id"] for row in self.connection.execute("SELECT member_id FROM members")}
+        shares = self.preview_edit(draft, members)
+        timestamp = datetime.now(UTC).isoformat()
+        with self._transaction():
+            row = self.connection.execute("SELECT * FROM receipts WHERE receipt_id = ?", (receipt_id,)).fetchone()
+            if row is None:
+                raise LookupError("receipt does not exist")
+            if row["version"] != version:
+                raise ReceiptUpdateConflictError("receipt was updated by someone else")
+            content_hash = self._content_hash(confirmed_draft=draft.model_dump(mode="json"), note=note, photo_paths=json.loads(row["photo_paths_json"]), raw_model_response=json.loads(row["raw_model_response_json"]), uploader_id=row["uploader_id"], extractor_model=row["extractor_model"], prompt_version=row["prompt_version"], status="confirmed", shares=shares)
+            cursor = self.connection.execute(
+                """UPDATE receipts SET status='confirmed', receipt_date=?, total_cents=?, subtotal_cents=?, payer_id=?, note=?, confirmed_draft_json=?, content_hash=?, confirmed_at=COALESCE(confirmed_at, ?), updated_by=?, updated_at=?, version=version+1 WHERE receipt_id=? AND version=?""",
+                (draft.receipt_date, draft.total_cents, draft.subtotal_cents, draft.payer_id, note, _compact_json(draft.model_dump(mode="json")), content_hash, timestamp, updated_by, timestamp, receipt_id, version),
+            )
+            if cursor.rowcount != 1:
+                raise ReceiptUpdateConflictError("receipt was updated by someone else")
+            self.connection.execute("DELETE FROM receipt_shares WHERE receipt_id = ?", (receipt_id,))
+            self.connection.executemany("INSERT INTO receipt_shares(receipt_id, member_id, amount_cents) VALUES (?, ?, ?)", ((receipt_id, member_id, amount) for member_id, amount in shares.items()))
+            return self._get_receipt(receipt_id, created=False)
 
     def monthly_settlement(
         self,

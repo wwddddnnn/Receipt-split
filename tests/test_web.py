@@ -120,7 +120,7 @@ def test_extraction_error_returns_json_and_service_stays_available(monkeypatch, 
     assert database.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 0
 
 
-def test_unconfirmed_model_draft_returns_json_without_writing_receipt(monkeypatch, tmp_path: Path):
+def test_unconfirmed_model_draft_is_saved_as_pending_receipt(monkeypatch, tmp_path: Path):
     def extractor(*_args, **_kwargs):
         draft = _complete_draft()
         draft.needs_clarification = [
@@ -131,11 +131,12 @@ def test_unconfirmed_model_draft_returns_json_without_writing_receipt(monkeypatc
     with _client(monkeypatch, tmp_path, extractor) as client:
         _login(client)
         response = _submission(client)
-        assert response.status_code == 422
-        assert response.json()["error"]["code"] == "receipt_needs_clarification"
+        assert response.status_code == 201
+        assert response.json()["status"] == "pending"
+        assert response.json()["needs_clarification"] == [{"field": "total_cents", "reason": "The total is unclear."}]
 
     database = sqlite3.connect(tmp_path / "data" / "ledger.sqlite")
-    assert database.execute("SELECT COUNT(*) FROM receipts").fetchone()[0] == 0
+    assert database.execute("SELECT status FROM receipts").fetchone()[0] == "pending"
 
 
 def test_login_failure_does_not_leak_whether_account_exists(monkeypatch, tmp_path: Path):
@@ -147,3 +148,24 @@ def test_login_failure_does_not_leak_whether_account_exists(monkeypatch, tmp_pat
             response = client.post("/auth/login", json={"member_id": member_id, "password": password})
             assert response.status_code == 401
             assert response.json()["error"]["message"] == "账号或密码错误"
+
+
+def test_receipt_edit_recalculates_shares_and_rejects_stale_version(monkeypatch, tmp_path: Path):
+    def extractor(*_args, **_kwargs):
+        return _complete_draft(), {"response_id": "edit-test"}
+
+    with _client(monkeypatch, tmp_path, extractor) as client:
+        _login(client)
+        original = _submission(client).json()
+        payload = {
+            "version": original["version"], "receipt_date": "2026-12-01", "total_cents": 6000,
+            "payer_id": "AmyTest", "note": "edited note",
+            "individual_charges": [{"member_id": "AmyTest", "amount_cents": 1000}],
+            "remainder_member_ids": ["BenTest"],
+        }
+        assert client.post(f"/receipts/{original['receipt_id']}/preview", json=payload).json() == {"AmyTest": 1000, "BenTest": 5000}
+        saved = client.put(f"/receipts/{original['receipt_id']}", json=payload)
+        assert saved.status_code == 200
+        assert saved.json()["shares"] == {"AmyTest": 1000, "BenTest": 5000}
+        assert saved.json()["version"] == original["version"] + 1
+        assert client.put(f"/receipts/{original['receipt_id']}", json=payload).status_code == 409
