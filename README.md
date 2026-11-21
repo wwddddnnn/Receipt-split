@@ -20,13 +20,10 @@
 
 ## 页面截图
 <p align="center">
-  <img src="docs/screenshots/upload-mobile.PNG" width="25%" alt="Mobile receipt upload and note entry">
-  <img src="docs/screenshots/receipt-edit-desktop.png" width="25%" alt="Desktop receipt draft review and editing">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/receipt-list.PNG" width="25%" alt="Receipt list">
-  <img src="docs/screenshots/settlement.PNG" width="25%" alt="Monthly settlement and transfer suggestions">
+  <img src="docs/screenshots/upload-mobile.PNG" width="24%" alt="Mobile receipt upload and note entry">
+  <img src="docs/screenshots/receipt-edit-desktop.png" width="24%" alt="Desktop receipt draft review and editing">
+  <img src="docs/screenshots/receipt-list.PNG" width="24%" alt="Receipt list">
+  <img src="docs/screenshots/settlement.PNG" width="24%" alt="Monthly settlement and transfer suggestions">
 </p>
 
 ## Easy start
@@ -156,13 +153,10 @@ The receipt list filters by month and status. The settlement page shows your net
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/upload-mobile.PNG" width="25%" alt="Mobile receipt upload and note entry">
-  <img src="docs/screenshots/receipt-edit-desktop.png" width="25%" alt="Desktop receipt draft review and editing">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/receipt-list.PNG" width="25%" alt="Receipt list">
-  <img src="docs/screenshots/settlement.PNG" width="25%" alt="Monthly settlement and transfer suggestions">
+  <img src="docs/screenshots/upload-mobile.PNG" width="24%" alt="Mobile receipt upload and note entry">
+  <img src="docs/screenshots/receipt-edit-desktop.png" width="24%" alt="Desktop receipt draft review and editing">
+  <img src="docs/screenshots/receipt-list.PNG" width="24%" alt="Receipt list">
+  <img src="docs/screenshots/settlement.PNG" width="24%" alt="Monthly settlement and transfer suggestions">
 </p>
 
 ## Easy start
